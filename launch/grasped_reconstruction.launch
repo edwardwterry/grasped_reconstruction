@@ -1,0 +1,3 @@
+<launch>
+  <node name="grasped_reconstruction" pkg="grasped_reconstruction" type="grasped_reconstruction" />
+</launch>
