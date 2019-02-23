@@ -76,9 +76,7 @@ private:
   ros::NodeHandle n_;
   ros::Publisher camera_pub = n_.advertise<gazebo_msgs::ModelState>("/gazebo/set_model_state", 1);
   ros::Publisher cloud_pub = n_.advertise<sensor_msgs::PointCloud2>("/point_cloud_transformed", 1);
-  // ros::ServiceClient client = n_.serviceClient<gazebo_msgs::ModelState>("/gazebo/set_model_state");
-  // gazebo_msgs::ModelState modelstate;
-  // gazebo_msgs::SetModelState srv;
+  ros::Subscriber cloud_sub = n_.subscribe("/camera/depth/points", 1, &CameraMotion::pcClbk, this);
   ros::Time start = ros::Time::now();
   tf::TransformBroadcaster br;
   tf::TransformListener listener;
