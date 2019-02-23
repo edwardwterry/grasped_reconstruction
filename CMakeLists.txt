@@ -4,13 +4,18 @@ project(grasped_reconstruction)
 ## Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++11)
 
+# https://stackoverflow.com/questions/37441189/locations-pclconfig-cmake-and-pcl-config-cmake-files-for-pcl-library
+set(PCL_DIR "/usr/lib/x86_64-linux-gnu/cmake/pcl/")
+
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED
     octomap REQUIRED
     gazebo_ros
-    gazebo_msgs)
+    gazebo_msgs
+    pcl_ros
+    PCL REQUIRED)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
@@ -113,13 +118,14 @@ catkin_package(
 
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
-link_directories(${GAZEBO_LIBRARY_DIRS})
+link_directories(${GAZEBO_LIBRARY_DIRS} ${PCL_INCLUDE_DIRS})
 include_directories(
  include
  ${catkin_INCLUDE_DIRS}
  ${GAZEBO_INCLUDE_DIRS}
+ ${PCL_INCLUDE_DIRS}
 )
-
+add_definitions(${PCL_DEFINITIONS})
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
 #   src/${PROJECT_NAME}/grasped_reconstruction.cpp
@@ -149,6 +155,7 @@ include_directories(
 target_link_libraries(${PROJECT_NAME}
   ${catkin_LIBRARIES}
   ${GAZEBO_LIBRARIES}
+  ${PCL_LIBRARIES}
 )
 
 #############
