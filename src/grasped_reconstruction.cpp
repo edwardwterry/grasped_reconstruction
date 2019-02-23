@@ -4,6 +4,13 @@
 #include <tf/transform_broadcaster.h>
 #include <tf/transform_listener.h>
 #include <math.h>
+#include <pcl_ros/point_cloud.h>
+#include <pcl/point_types.h>
+#include <pcl_conversions/pcl_conversions.h>
+#include <sensor_msgs/PointCloud2.h>
+#include <pcl/common/io.h>
+#include "pcl_ros/transforms.h"
+#include "pcl_ros/impl/transforms.hpp"
 
 const float PI_F = 3.14159265358979f;
 
@@ -40,7 +47,7 @@ public:
       ms.pose.position.y = 0.0f;
       ms.pose.position.z = 0.25f;
       ROS_ERROR("%s", ex.what());
-      ros::Duration(1.0).sleep();
+      // ros::Duration(1.0).sleep();
     }
 
     ms.model_name = (std::string) "kinect";
@@ -53,11 +60,21 @@ public:
     ms.pose.orientation.z = transform_in.getRotation().z();
     ms.pose.orientation.w = transform_in.getRotation().w();
     camera_pub.publish(ms);
+
+    // pcl_ros::transformPointCloud("/camera_link", cloud_in, cloud_out, listener);
+    // cloud_pub.publish(cloud_out);
+  }
+
+  void pcClbk(const sensor_msgs::PointCloud2 &msg)
+  {
+    cloud_in = msg;
   }
 
 private:
   ros::NodeHandle n_;
   ros::Publisher camera_pub = n_.advertise<gazebo_msgs::ModelState>("/gazebo/set_model_state", 1);
+  ros::Publisher cloud_pub = n_.advertise<sensor_msgs::PointCloud2>("/point_cloud_transformed", 1);
+  ros::Subscriber cloud_sub = n_.subscribe("/camera/depth/points", 1, &CameraMotion::pcClbk, this);
   // ros::ServiceClient client = n_.serviceClient<gazebo_msgs::ModelState>("/gazebo/set_model_state");
   // gazebo_msgs::ModelState modelstate;
   // gazebo_msgs::SetModelState srv;
@@ -70,6 +87,8 @@ private:
   int increment = 0;
   float ROTATION_RATE = 0.25f;
   float CAMERA_OFFSET = 2.0f; // [m]
+
+  sensor_msgs::PointCloud2 cloud_in, cloud_out;
 };
 
 int main(int argc, char **argv)
