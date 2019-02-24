@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "/usr/share/gazebo-7/worlds"
+		},
+		{
+			"path": "/opt/ros/kinetic/share"
+		}
+	],
+	"settings": {}
+}
