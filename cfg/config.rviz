@@ -7,8 +7,9 @@ Panels:
         - /Global Options1
         - /Status1
         - /OccupancyGrid1
-        - /OccupancyGrid1/Status1
         - /Image1
+        - /TF1
+        - /TF1/Frames1
       Splitter Ratio: 0.5
     Tree Height: 567
   - Class: rviz/Selection
@@ -77,6 +78,7 @@ Visualization Manager:
         Grid: true
         Image: true
         OccupancyGrid: true
+        TF: true
         Value: true
       Zoom Factor: 1
     - Class: rviz/Image
@@ -91,11 +93,37 @@ Visualization Manager:
       Transport Hint: raw
       Unreliable: false
       Value: true
+    - Class: rviz/TF
+      Enabled: true
+      Frame Timeout: 15
+      Frames:
+        All Enabled: false
+        base_link:
+          Value: false
+        camera_link:
+          Value: false
+        lens_link:
+          Value: true
+        world:
+          Value: false
+      Marker Scale: 1
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Tree:
+        world:
+          base_link:
+            camera_link:
+              lens_link:
+                {}
+      Update Interval: 0
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
     Default Light: true
-    Fixed Frame: center_link
+    Fixed Frame: world
     Frame Rate: 30
   Name: root
   Tools:
@@ -116,25 +144,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 5.98648262
+      Distance: 3.77372742
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.0599999987
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 1.38707781
-        Y: -0.126505852
-        Z: 0.487779379
+        X: 0.802083552
+        Y: -0.410651505
+        Z: -1.6059028e-05
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.0500000007
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.00999999978
-      Pitch: 0.844796836
+      Pitch: 0.514796972
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 2.54357314
+      Yaw: 2.49357462
     Saved: ~
 Window Geometry:
   Camera:
