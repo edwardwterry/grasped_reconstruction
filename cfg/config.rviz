@@ -8,6 +8,8 @@ Panels:
         - /Status1
         - /OccupancyGrid1
         - /Image1
+        - /TF1
+        - /TF1/Frames1
       Splitter Ratio: 0.5
     Tree Height: 567
   - Class: rviz/Selection
@@ -73,10 +75,10 @@ Visualization Manager:
       Unreliable: false
       Value: false
       Visibility:
-        "": true
         Grid: true
         Image: true
         OccupancyGrid: true
+        TF: true
         Value: true
       Zoom Factor: 1
     - Class: rviz/Image
@@ -95,13 +97,15 @@ Visualization Manager:
       Enabled: true
       Frame Timeout: 15
       Frames:
-        All Enabled: true
+        All Enabled: false
         base_link:
-          Value: true
+          Value: false
         camera_link:
+          Value: false
+        lens_link:
           Value: true
         world:
-          Value: true
+          Value: false
       Marker Scale: 1
       Name: TF
       Show Arrows: true
@@ -111,7 +115,8 @@ Visualization Manager:
         world:
           base_link:
             camera_link:
-              {}
+              lens_link:
+                {}
       Update Interval: 0
       Value: true
   Enabled: true
@@ -139,25 +144,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 4.49119711
+      Distance: 3.77372742
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.0599999987
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 0.760507226
-        Y: -0.460670084
-        Z: -0.00905952696
+        X: 0.802083552
+        Y: -0.410651505
+        Z: -1.6059028e-05
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.0500000007
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.00999999978
-      Pitch: 0.544797003
+      Pitch: 0.514796972
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 2.49857545
+      Yaw: 2.49357462
     Saved: ~
 Window Geometry:
   Camera:
