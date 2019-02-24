@@ -7,7 +7,6 @@ Panels:
         - /Global Options1
         - /Status1
         - /OccupancyGrid1
-        - /OccupancyGrid1/Status1
         - /Image1
       Splitter Ratio: 0.5
     Tree Height: 567
@@ -74,6 +73,7 @@ Visualization Manager:
       Unreliable: false
       Value: false
       Visibility:
+        "": true
         Grid: true
         Image: true
         OccupancyGrid: true
@@ -91,11 +91,34 @@ Visualization Manager:
       Transport Hint: raw
       Unreliable: false
       Value: true
+    - Class: rviz/TF
+      Enabled: true
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+        base_link:
+          Value: true
+        camera_link:
+          Value: true
+        world:
+          Value: true
+      Marker Scale: 1
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Tree:
+        world:
+          base_link:
+            camera_link:
+              {}
+      Update Interval: 0
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
     Default Light: true
-    Fixed Frame: center_link
+    Fixed Frame: world
     Frame Rate: 30
   Name: root
   Tools:
@@ -116,25 +139,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 5.98648262
+      Distance: 4.49119711
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.0599999987
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 1.38707781
-        Y: -0.126505852
-        Z: 0.487779379
+        X: 0.760507226
+        Y: -0.460670084
+        Z: -0.00905952696
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.0500000007
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.00999999978
-      Pitch: 0.844796836
+      Pitch: 0.544797003
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 2.54357314
+      Yaw: 2.49857545
     Saved: ~
 Window Geometry:
   Camera:

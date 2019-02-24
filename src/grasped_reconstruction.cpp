@@ -4,13 +4,13 @@
 #include <tf/transform_broadcaster.h>
 #include <tf/transform_listener.h>
 #include <math.h>
-#include <pcl_ros/point_cloud.h>
-#include <pcl/point_types.h>
-#include <pcl_conversions/pcl_conversions.h>
+// #include <pcl_ros/point_cloud.h>
+// #include <pcl/point_types.h>
+// #include <pcl_conversions/pcl_conversions.h>
 #include <sensor_msgs/PointCloud2.h>
-#include <pcl/common/io.h>
-#include "pcl_ros/transforms.h"
-#include "pcl_ros/impl/transforms.hpp"
+// #include <pcl/common/io.h>
+// #include "pcl_ros/transforms.h"
+// #include "pcl_ros/impl/transforms.hpp"
 
 const float PI_F = 3.14159265358979f;
 
@@ -19,20 +19,21 @@ class CameraMotion
 public:
   CameraMotion(const ros::NodeHandle &n) : n_(n)
   {
-    transform_in.setOrigin(tf::Vector3(0.0f, 0.0f, 0.0f));
+    transform_in.setOrigin(tf::Vector3(0.25f, 0.0f, 0.0f));
     transform_in.setRotation(tf::Quaternion(0.0f, 0.0f, 0.0f, 1.0f));
   };
   void rotateCameraAboutOrigin()
   {
     ros::Time now = ros::Time::now();
-    ros::Duration diff = now - start;
+    // ros::Duration diff = now - start;
     gazebo_msgs::ModelState ms;
 
     try
     {
-      listener.lookupTransform("/map", "/camera_link", now, transform_in);
+      listener.waitForTransform("/world", "/camera_link", ros::Time(0), ros::Duration(3.0));
+      listener.lookupTransform("/world", "/camera_link", ros::Time(0), transform_in);
       // listener2.lookupTransform("/map", "/lens_link", now, transform2_in);
-      listener2.lookupTransform("/lens_link", "/map", now, transform2_in);
+      // listener2.lookupTransform("/lens_link", "/map", now, transform2_in);
     }
     catch (tf::TransformException ex)
     {
@@ -43,29 +44,29 @@ public:
       // ros::Duration(1.0).sleep();
     }
 
-    float diff_secs = static_cast<float>(diff.toSec());
-    // int sign = (diff_secs % 2 == 1) ? 1 : -1;
-    float yaw = ROTATION_RATE * diff_secs;
-    // float x = sign * 1.0f;
-    if (yaw > 2 * PI_F)
-    {
-      yaw -= 2 * PI_F;
-    }
-    q.setRPY(0.0f, 0.0f, yaw);
+    // float diff_secs = static_cast<float>(diff.toSec());
+    // // int sign = (diff_secs % 2 == 1) ? 1 : -1;
+    // float yaw = ROTATION_RATE * diff_secs;
+    // // float x = sign * 1.0f;
+    // if (yaw > 2 * PI_F)
+    // {
+    //   yaw -= 2 * PI_F;
+    // }
+    q.setRPY(0.0f, 0.0f, 0.0f);
     transform_out.setRotation(q);
-    transform_out.setOrigin(tf::Vector3(0.0f, 0.0f, 0.0f));
-    br.sendTransform(tf::StampedTransform(transform_out, now, "map", "center_link"));
+    transform_out.setOrigin(tf::Vector3(0.25f, 0.0f, 0.0f));
+    br.sendTransform(tf::StampedTransform(transform_out, now, "world", "base_link"));
 
-    try
-    {
-      pcl_ros::transformPointCloud("/map", cloud_in, cloud_out, listener2);
-      cloud_pub.publish(cloud_out);
-    }
-    catch (tf::TransformException ex)
-    {
+    // try
+    // {
+    //   pcl_ros::transformPointCloud("/map", cloud_in, cloud_out, listener2);
+    //   cloud_pub.publish(cloud_out);
+    // }
+    // catch (tf::TransformException ex)
+    // {
 
-      ROS_ERROR("%s", ex.what());
-    }
+    //   ROS_ERROR("%s", ex.what());
+    // }
     // ms.pose.position.x = 1.0f;
     // ms.pose.position.y = 0.0f;
     // ms.pose.position.z = 0.25f;
@@ -74,17 +75,17 @@ public:
     // ms.pose.orientation.z = 0.0f;
     // ms.pose.orientation.w = 1.0f;
 
-    // ms.model_name = (std::string) "kinect";
-    // ms.reference_frame = (std::string) "map";
-    // // ROS_INFO("xyz: %f %f %f", transform_in.getOrigin().x(), transform_in.getOrigin().y(), transform_in.getOrigin().z());
-    // ms.pose.position.x = transform_in.getOrigin().x();
-    // ms.pose.position.y = transform_in.getOrigin().y();
-    // ms.pose.position.z = transform_in.getOrigin().z();
-    // ms.pose.orientation.x = transform_in.getRotation().x();
-    // ms.pose.orientation.y = transform_in.getRotation().y();
-    // ms.pose.orientation.z = transform_in.getRotation().z();
-    // ms.pose.orientation.w = transform_in.getRotation().w();
-    // camera_pub.publish(ms);
+    ms.model_name = (std::string) "kinect";
+    ms.reference_frame = (std::string) "world";
+    // ROS_INFO("xyz: %f %f %f", transform_in.getOrigin().x(), transform_in.getOrigin().y(), transform_in.getOrigin().z());
+    ms.pose.position.x = transform_in.getOrigin().x();
+    ms.pose.position.y = transform_in.getOrigin().y();
+    ms.pose.position.z = transform_in.getOrigin().z();
+    ms.pose.orientation.x = transform_in.getRotation().x();
+    ms.pose.orientation.y = transform_in.getRotation().y();
+    ms.pose.orientation.z = transform_in.getRotation().z();
+    ms.pose.orientation.w = transform_in.getRotation().w();
+    camera_pub.publish(ms);
   }
   void pcClbk(const sensor_msgs::PointCloud2 &msg)
   {
