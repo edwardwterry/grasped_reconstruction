@@ -1,7 +1,13 @@
 <launch>
+  <arg name="node_start_delay" value="5.0" />  
   <node type="rviz" name="rviz" pkg="rviz" args="-d $(find grasped_reconstruction)/cfg/config.rviz"/>
   <include file="$(find gazebo_ros)/launch/coke_can_world.launch"/>
-  <include file="$(find octomap_server)/launch/octomap_mapping.launch"/>
+  <!-- <include file="$(find octomap_server)/launch/octomap_mapping.launch"> -->
+  <!-- </include> -->
+  <node name="plot"
+        pkg="rqt_plot"
+        type="rqt_plot"
+        args="/proportion_unknown" />
   <include file="$(find grasped_reconstruction)/launch/grasped_reconstruction.launch"/>
   <node pkg="tf" type="static_transform_publisher" name="base_link_camera_link_broadcaster" args="0 0 0 3.1415 0 0 base_link camera_link 100" />
   <node pkg="tf" type="static_transform_publisher" name="camera_link_lens_link_broadcaster" args="0 0 0 -1.5708 0 -1.5708 camera_link lens_link 100" />

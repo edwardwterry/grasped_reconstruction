@@ -19,5 +19,9 @@
 			"path": "/home/et/.gazebo/models"
 		}
 	],
-	"settings": {}
+	"settings": {
+		"files.associations": {
+			"*.ipp": "cpp"
+		}
+	}
 }

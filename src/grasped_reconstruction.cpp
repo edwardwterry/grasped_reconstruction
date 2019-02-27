@@ -8,6 +8,7 @@
 #include <octomap/octomap.h>
 #include <octomap_msgs/Octomap.h>
 #include <octomap/ColorOcTree.h>
+#include <std_msgs/Float32.h>
 // #include <sensor_msgs/PointCloud2.h>
 
 const float PI_F = 3.14159265358979f;
@@ -62,7 +63,8 @@ public:
 private:
   ros::NodeHandle n_;
   ros::Publisher camera_pub = n_.advertise<gazebo_msgs::ModelState>("/gazebo/set_model_state", 1);
-  ros::Subscriber octree_sub = n_.subscribe("/octomap_full", 1, &CameraMotion::octreeClbk, this);
+  ros::Publisher unknown_pub = n_.advertise<std_msgs::Float32>("/proportion_unknown", 1);
+  ros::Subscriber octree_sub = n_.subscribe("/octomap_binary", 1, &CameraMotion::octreeClbk, this);
   ros::Time start = ros::Time::now();
   tf::TransformBroadcaster br;
   tf::TransformListener listener, listener2;
@@ -82,26 +84,25 @@ private:
   }
   void octreeClbk(const octomap_msgs::Octomap &msg)
   {
-    // octree_msg = msg;
     octomap::AbstractOcTree *tree = octomap_msgs::binaryMsgToMap(msg);
     octomap::OcTree *octree = dynamic_cast<octomap::OcTree *>(tree);
-
-    // boost::scoped_ptr<octomap::AbstractOcTree> abstract_octree(octomap_msgs::binaryMsgToMap(msg));
-    // boost::scoped_ptr<octomap::OcTree> octree(dynamic_cast<octomap::OcTree>(abstract_octree));
-    // OcTree* octree = ;
-    float resolution = 0.05;
-
-    for (float ix = -0.5; ix < 0.5; ix += resolution)
-      for (float iy = -0.5; iy < 0.5; iy += resolution)
-        for (float iz = -0.1; iz < 0.5; iz += resolution)
+    int visited = 0;
+    int unknown = 0;
+    double resolution = 0.05;p
+    for (double ix = -0.2; ix < 0.2; ix += resolution)
+      for (double iy = -0.2; iy < 0.2; iy += resolution)
+        for (double iz = 0.0; iz < 0.3; iz += resolution)
         {
+          visited++;
           if (!octree->search(ix, iy, iz))
           {
-            ROS_INFO("%s %f %f %f", "Cell is unknown", ix, iy, iz);
+            unknown++;
           }
         }
-    delete tree;
-    delete octree;
+    std::cout << "Proportion unknown: " << float(unknown) / float(visited) << std::endl;
+    std_msgs::Float32 unknown_msg;
+    unknown_msg.data = float(unknown) / float(visited);
+    unknown_pub.publish(unknown_msg);
   }
 };
 
