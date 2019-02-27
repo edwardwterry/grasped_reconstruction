@@ -15,6 +15,8 @@ find_package(catkin REQUIRED
     gazebo_ros
     gazebo_msgs
     pcl_ros
+    octomap_ros REQUIRED
+    octomap_msgs REQUIRED
     PCL REQUIRED)
 
 ## System dependencies are found with CMake's conventions
@@ -124,6 +126,7 @@ include_directories(
  ${catkin_INCLUDE_DIRS}
  ${GAZEBO_INCLUDE_DIRS}
  ${PCL_INCLUDE_DIRS}
+ ${octomap_INCLUDE_DIRS}
 )
 add_definitions(${PCL_DEFINITIONS})
 ## Declare a C++ library
@@ -134,7 +137,7 @@ add_definitions(${PCL_DEFINITIONS})
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
 ## either from message generation or dynamic reconfigure
-# add_dependencies(${PROJECT_NAME} ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+#add_dependencies(${PROJECT_NAME} ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context

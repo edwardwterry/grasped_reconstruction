@@ -4,7 +4,11 @@
 #include <tf/transform_broadcaster.h>
 #include <tf/transform_listener.h>
 #include <math.h>
-#include <sensor_msgs/PointCloud2.h>
+#include <octomap_msgs/conversions.h>
+#include <octomap/octomap.h>
+#include <octomap_msgs/Octomap.h>
+#include <octomap/ColorOcTree.h>
+// #include <sensor_msgs/PointCloud2.h>
 
 const float PI_F = 3.14159265358979f;
 
@@ -26,7 +30,6 @@ public:
     {
       listener.waitForTransform("/world", "/camera_link", ros::Time(0), ros::Duration(3.0));
       listener.lookupTransform("/world", "/camera_link", ros::Time(0), transform_in);
-
     }
     catch (tf::TransformException ex)
     {
@@ -59,16 +62,47 @@ public:
 private:
   ros::NodeHandle n_;
   ros::Publisher camera_pub = n_.advertise<gazebo_msgs::ModelState>("/gazebo/set_model_state", 1);
+  ros::Subscriber octree_sub = n_.subscribe("/octomap_full", 1, &CameraMotion::octreeClbk, this);
   ros::Time start = ros::Time::now();
   tf::TransformBroadcaster br;
   tf::TransformListener listener, listener2;
   tf::Transform transform_out;
   tf::StampedTransform transform_in, transform2_in;
   tf::Quaternion q;
-  int increment = 0;
   float ROTATION_RATE = 0.25f;
   float CAMERA_OFFSET = 1.0f; // [m]
-  sensor_msgs::PointCloud2 cloud_in, cloud_out;
+  // octomap_msgs::Octomap octree_msg;
+
+  void calculateUnknownVoxels()
+  {
+    // if (octree != NULL)
+    // {
+    // https: //github.com/personalrobotics/or_octomap/issues/2
+    // // https://groups.google.com/forum/#!topic/octomap/zNsuIyVtko8
+  }
+  void octreeClbk(const octomap_msgs::Octomap &msg)
+  {
+    // octree_msg = msg;
+    octomap::AbstractOcTree *tree = octomap_msgs::binaryMsgToMap(msg);
+    octomap::OcTree *octree = dynamic_cast<octomap::OcTree *>(tree);
+
+    // boost::scoped_ptr<octomap::AbstractOcTree> abstract_octree(octomap_msgs::binaryMsgToMap(msg));
+    // boost::scoped_ptr<octomap::OcTree> octree(dynamic_cast<octomap::OcTree>(abstract_octree));
+    // OcTree* octree = ;
+    float resolution = 0.05;
+
+    for (float ix = -0.5; ix < 0.5; ix += resolution)
+      for (float iy = -0.5; iy < 0.5; iy += resolution)
+        for (float iz = -0.1; iz < 0.5; iz += resolution)
+        {
+          if (!octree->search(ix, iy, iz))
+          {
+            ROS_INFO("%s %f %f %f", "Cell is unknown", ix, iy, iz);
+          }
+        }
+    delete tree;
+    delete octree;
+  }
 };
 
 int main(int argc, char **argv)

@@ -8,6 +8,15 @@
 		},
 		{
 			"path": "/opt/ros/kinetic/share"
+		},
+		{
+			"path": "/home/et/catkin_ws/src/bhand_gazebo"
+		},
+		{
+			"path": "/home/et/catkin_ws/src/ur5_barrett_bringup"
+		},
+		{
+			"path": "/home/et/.gazebo/models"
 		}
 	],
 	"settings": {}
