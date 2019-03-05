@@ -18,6 +18,7 @@ find_package(catkin REQUIRED
     pcl_ros
     octomap_ros REQUIRED
     octomap_msgs REQUIRED
+    Eigen3 REQUIRED
     PCL REQUIRED)
 
 ## System dependencies are found with CMake's conventions
@@ -128,6 +129,7 @@ include_directories(
  ${GAZEBO_INCLUDE_DIRS}
  ${PCL_INCLUDE_DIRS}
  ${octomap_INCLUDE_DIRS}
+ ${Eigen3_INCLUDE_DIRS}
 )
 add_definitions(${PCL_DEFINITIONS})
 ## Declare a C++ library
