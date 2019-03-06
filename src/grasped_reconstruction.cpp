@@ -6,6 +6,7 @@
 #include <math.h>
 #include <octomap_msgs/conversions.h>
 #include <octomap_ros/conversions.h>
+#include <visualization_msgs/MarkerArray.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <octomap/octomap.h>
 #include <octomap_msgs/Octomap.h>
@@ -14,6 +15,7 @@
 #include <octomap/OcTree.h>
 #include <octomap/OcTreeBaseImpl.h>
 #include <std_msgs/Float32.h>
+#include <std_msgs/String.h>
 #include <algorithm>
 
 // #include <sensor_msgs/PointCloud2.h>
@@ -99,12 +101,13 @@ public:
   }
   octomap::AbstractOcTree *tree;
   octomap::OcTree *octree;
-  // octomap::Pointcloud octomap_unobs_pc;
+  octomap::Pointcloud octomap_unobs_pc;
 
 private:
   ros::NodeHandle n_;
   ros::Publisher camera_pub = n_.advertise<gazebo_msgs::ModelState>("/gazebo/set_model_state", 1);
-  ros::Publisher unobs_pub = n_.advertise<std_msgs::Float32>("/proportion_unobs", 1);
+  ros::Publisher vis_pub = n_.advertise<visualization_msgs::MarkerArray>("/raycast_vectors", 1);
+  ros::Publisher unobs_pub = n_.advertise<sensor_msgs::PointCloud2>("/octomap_unobs", 1);
   // ros::Publisher unknown_voxel_pub = n_.advertise<sensor_msgs::PointCloud2>("/unknown_voxels_pc2", 1);
   ros::Subscriber octree_sub = n_.subscribe("/octomap_binary", 1, &CameraMotion::octreeClbk, this);
   // ros::Subscriber unknown_voxel_sub = n_.subscribe("/octomap_binary_unknown", 1, &CameraMotion::octreeUnknownClbk, this);
@@ -124,7 +127,7 @@ private:
   int cy = FRAME_HEIGHT / 2;
   float fx = (FRAME_WIDTH / 2.0f) / tan(HFOV / 2.0f);
   float fy = fx;
-  float RESOLUTION = 0.05f;   // [m]
+  float RESOLUTION = 0.05f;    // [m]
   float RAYCAST_RANGE = 3.0f; // [m]
 
   struct DirectedRay
@@ -137,7 +140,7 @@ private:
   std::vector<octomath::Vector3> calculateRayCastDirections()
   {
     std::vector<octomath::Vector3> raycast_vectors;
-    int STRIDE = 50;
+    int STRIDE = 100;
     for (int x = 0; x < FRAME_WIDTH; x += STRIDE)
     {
       for (int y = 0; y < FRAME_HEIGHT; y += STRIDE)
@@ -163,13 +166,42 @@ private:
   {
     std::cout << "Calculating unobserved voxels..." << std::endl;
     octomap::point3d_list unobs_centers;
-    octomap::point3d pmin = octomap::point3d(-0.2f, -0.2f, 0.0f);
-    octomap::point3d pmax = octomap::point3d(0.2f, 0.2f, 0.4f);
+    octomap::point3d pmin = octomap::point3d(-0.3f, -0.3f, 0.0f);
+    octomap::point3d pmax = octomap::point3d(0.3f, 0.3f, 0.5f);
     octree->getUnknownLeafCenters(unobs_centers, pmin, pmax);
-    for (const auto &centers : unobs_centers)
-    {
-      std::cout << "Unknown coords: " << centers.x() << " " << centers.y() << " " << centers.z() << std::endl;
+
+    { // visualization of unobserved voxels messages
+      visualization_msgs::MarkerArray marker_array;
+      int count = 0;
+      for (const auto &c : unobs_centers)
+      {
+        visualization_msgs::Marker marker;
+        marker.header.frame_id = "world";
+        marker.header.stamp = ros::Time();
+        marker.ns = "unobs";
+        marker.id = count;
+        marker.type = visualization_msgs::Marker::CUBE;
+        marker.action = visualization_msgs::Marker::ADD;
+        marker.pose.position.x = c.x();
+        marker.pose.position.y = c.y();
+        marker.pose.position.z = c.z();
+        marker.scale.x = 0.01;
+        marker.scale.y = 0.01;
+        marker.scale.z = 0.01;
+        marker.color.a = 1.0; // Don't forget to set the alpha!
+        marker.color.r = 0.0;
+        marker.color.g = 1.0;
+        marker.color.b = 0.0;
+        marker_array.markers.push_back(marker);
+        count++;
+      }
+      vis_pub.publish(marker_array);
     }
+
+    // for (const auto &centers : unobs_centers)
+    // {
+    //   std::cout << "Unknown coords: " << centers.x() << " " << centers.y() << " " << centers.z() << std::endl;
+    // }
     // std::cout<<"Made it!"<<std::endl;
     // octomap::OcTree octree_unobs(RESOLUTION);
     // https://answers.ros.org/question/252632/how-to-correctly-build-an-octomap-using-a-series-of-registered-point-clouds/
@@ -179,7 +211,39 @@ private:
     // get tf of where the camera is pointing (view)
 
     std::vector<octomath::Vector3> raycast_vectors = calculateRayCastDirections();
-    std::cout << "num of rays to be cast: " << raycast_vectors.size() << std::endl;
+    std::cout << "raycast vectors #: " << raycast_vectors.size() << std::endl;
+
+    // { // visualization of ray cast messages
+    //   visualization_msgs::MarkerArray marker_array;
+    //   for (uint32_t i = 0; i < raycast_vectors.size(); i++)
+    //   {
+    //     visualization_msgs::Marker marker;
+    //     marker.header.frame_id = "world";
+    //     marker.header.stamp = ros::Time();
+    //     marker.ns = "my_namespace";
+    //     marker.id = i;
+    //     marker.type = visualization_msgs::Marker::ARROW;
+    //     marker.action = visualization_msgs::Marker::ADD;
+    //     geometry_msgs::Point pt0, pt1;
+    //     pt0.x = 0;
+    //     pt0.y = 0;
+    //     pt0.z = 0;
+    //     marker.points.push_back(pt0);
+    //     pt1.x = raycast_vectors[i].x();
+    //     pt1.y = raycast_vectors[i].y();
+    //     pt1.z = raycast_vectors[i].z();
+    //     marker.points.push_back(pt1);
+    //     marker.scale.x = 0.01;
+    //     marker.scale.y = 0.01;
+    //     marker.scale.z = 0.01;
+    //     marker.color.a = 1.0; // Don't forget to set the alpha!
+    //     marker.color.r = 0.0;
+    //     marker.color.g = 1.0;
+    //     marker.color.b = 0.0;
+    //     marker_array.markers.push_back(marker);
+    //   }
+    //   vis_pub.publish(marker_array);
+    // }
 
     // need to rotate raycast_vectors to align with view
     octomap::point3d origin = octomap::point3d(view.getOrigin().getX(), view.getOrigin().getY(), view.getOrigin().getZ());
@@ -192,16 +256,16 @@ private:
       // {
       //   std::cout << "Count: " << count << std::endl;
       // }
-      std::cout << "Ray: " << count << std::endl;
+      // std::cout << "Ray: " << count << std::endl;
       count++;
       std::vector<octomap::point3d> ray;
       octomap::point3d end = origin + v * RAYCAST_RANGE;
-      std::cout << "Origin: " << origin.x() << " " << origin.y() << " " << origin.z() << std::endl;
-      std::cout << "End: " << end.x() << " " << end.y() << " " << end.z() << std::endl;
+      // std::cout << "Origin: " << origin.x() << " " << origin.y() << " " << origin.z() << std::endl;
+      // std::cout << "End: " << end.x() << " " << end.y() << " " << end.z() << std::endl;
       octree->computeRay(origin, end, ray);
       for (const auto &coord : ray)
       {
-        std::cout << "Searching at this coordinate: " << coord.x() << " " << coord.y() << " " << coord.z() << std::endl;
+        // std::cout << "Searching at this coordinate: " << coord.x() << " " << coord.y() << " " << coord.z() << std::endl;
         octomap::OcTreeNode *n = octree->search(coord);
         if (n != NULL)
         {
@@ -279,9 +343,9 @@ private:
     pcl::PointXYZ p;
     pcl::PointCloud<pcl::PointXYZ> temp_data_cloud;
 
-    for (double ix = -0.2; ix < 0.2; ix += RESOLUTION)
-      for (double iy = -0.2; iy < 0.2; iy += RESOLUTION)
-        for (double iz = 0.0; iz < 0.3; iz += RESOLUTION)
+    for (double ix = -0.3; ix < 0.3; ix += RESOLUTION)
+      for (double iy = -0.3; iy < 0.3; iy += RESOLUTION)
+        for (double iz = 0.0; iz < 0.5; iz += RESOLUTION)
         {
           visited++;
           if (!octree->search(ix, iy, iz))
@@ -295,10 +359,18 @@ private:
         }
     // from http://ros-developer.com/2017/02/23/converting-pcl-point-cloud-to-ros-pcl-cloud-message-and-the-reverse/
     // make a new point cloud composed of only unobserved voxels
-    // sensor_msgs::PointCloud2 unobs_voxel_msg;
-    // pcl::toROSMsg(temp_data_cloud, unobs_voxel_msg);
+    // std::cout << "temp data cloud size: " << temp_data_cloud.size() << std::endl;
+    sensor_msgs::PointCloud2 unobs_voxel_msg;
+
+    pcl::toROSMsg(temp_data_cloud, unobs_voxel_msg);
+    unobs_voxel_msg.header = std_msgs::Header();
+    // std_msgs::String frame_id;
+    // frame_id.data = "world";
+    unobs_voxel_msg.header.frame_id = "world";       //frame_id; //std_msgs::String("world");
+    unobs_voxel_msg.header.stamp = ros::Time::now(); //frame_id; //std_msgs::String("world");
     // http://docs.ros.org/jade/api/octomap_ros/html/conversions_8h.html
     // octomap::pointCloud2ToOctomap(unobs_voxel_msg, octomap_unobs_pc);
+    unobs_pub.publish(unobs_voxel_msg);
   }
 };
 

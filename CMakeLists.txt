@@ -16,6 +16,7 @@ find_package(catkin REQUIRED
     gazebo_msgs
     std_msgs
     pcl_ros
+    visualization_msgs
     octomap_ros REQUIRED
     octomap_msgs REQUIRED
     PCL REQUIRED)

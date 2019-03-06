@@ -10,6 +10,7 @@ Panels:
         - /Image1
         - /TF1
         - /TF1/Frames1
+        - /MarkerArray1
       Splitter Ratio: 0.5
     Tree Height: 567
   - Class: rviz/Selection
@@ -53,14 +54,14 @@ Visualization Manager:
       Reference Frame: <Fixed Frame>
       Value: true
     - Class: octomap_rviz_plugin/OccupancyGrid
-      Enabled: true
+      Enabled: false
       Max. Height Display: 3.40282347e+38
       Max. Octree Depth: 16
       Min. Height Display: -3.40282347e+38
       Name: OccupancyGrid
       Octomap Topic: /octomap_full
       Queue Size: 5
-      Value: true
+      Value: false
       Voxel Alpha: 1
       Voxel Coloring: Z-Axis
       Voxel Rendering: Occupied Voxels
@@ -75,6 +76,7 @@ Visualization Manager:
       Unreliable: false
       Value: false
       Visibility:
+        "": true
         Grid: true
         Image: true
         OccupancyGrid: true
@@ -94,30 +96,26 @@ Visualization Manager:
       Unreliable: false
       Value: true
     - Class: rviz/TF
-      Enabled: true
+      Enabled: false
       Frame Timeout: 15
       Frames:
         All Enabled: false
-        base_link:
-          Value: false
-        camera_link:
-          Value: false
-        lens_link:
-          Value: true
-        world:
-          Value: false
       Marker Scale: 1
       Name: TF
       Show Arrows: true
       Show Axes: true
       Show Names: true
       Tree:
-        world:
-          base_link:
-            camera_link:
-              lens_link:
-                {}
+        {}
       Update Interval: 0
+      Value: false
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /raycast_vectors
+      Name: MarkerArray
+      Namespaces:
+        {}
+      Queue Size: 100
       Value: true
   Enabled: true
   Global Options:
