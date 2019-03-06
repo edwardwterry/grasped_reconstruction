@@ -28,6 +28,7 @@ public:
     transform_in.setOrigin(tf::Vector3(0.25f, 0.0f, 0.0f));
     transform_in.setRotation(tf::Quaternion(0.0f, 0.0f, 0.0f, 1.0f));
   };
+
   void rotateCameraAboutOrigin()
   {
     ros::Time now = ros::Time::now();
@@ -65,7 +66,40 @@ public:
     ms.pose.orientation.z = transform_in.getRotation().z();
     ms.pose.orientation.w = transform_in.getRotation().w();
     camera_pub.publish(ms);
+    // std::cout << "Publishing transform at: [xyz] [xyzw] " << ms.pose.position.x << " " << ms.pose.position.y << " " << ms.pose.position.z << " " << ms.pose.orientation.w << " " << ms.pose.orientation.y << " " << ms.pose.orientation.z << " " << ms.pose.orientation.w << std::endl;
   }
+
+  bool nbv_calculated = false;
+  bool received_octomap_msg = false;
+
+  tf::Transform calculateNbv()
+  {
+    std::cout << "Calculating NBV..." << std::endl;
+    tf::Transform nbv;
+    int num_views_to_consider = 6;
+    std::vector<float> yaw_angles;
+    std::vector<int> num_unobs_voxels;
+    for (int i = 0; i < num_views_to_consider; i++)
+    {
+      yaw_angles.push_back((float)i * (2.0f * PI_F) / num_views_to_consider);
+    }
+    if (octree->getRoot() != NULL)
+    {
+      std::cout << "Tree is not empty!" << std::endl;
+      for (const auto &yaw : yaw_angles)
+      {
+        int num_unobs = calculateUnobsVoxels(getViewTransform(yaw));
+        num_unobs_voxels.push_back(num_unobs);
+      }
+      nbv = getViewTransform(*std::max_element(num_unobs_voxels.begin(), num_unobs_voxels.end()));
+    }
+    nbv_calculated = true;
+
+    return nbv;
+  }
+  octomap::AbstractOcTree *tree;
+  octomap::OcTree *octree;
+  // octomap::Pointcloud octomap_unobs_pc;
 
 private:
   ros::NodeHandle n_;
@@ -99,17 +133,14 @@ private:
     octomap::point3d dir;
   };
 
-  octomap::AbstractOcTree *tree;
-  octomap::OcTree *octree;
-  octomap::Pointcloud octomap_unobs_pc;
-
   // calculate ray casting directions
   std::vector<octomath::Vector3> calculateRayCastDirections()
   {
     std::vector<octomath::Vector3> raycast_vectors;
-    for (int x = 0; x < FRAME_WIDTH; x++)
+    int STRIDE = 50;
+    for (int x = 0; x < FRAME_WIDTH; x += STRIDE)
     {
-      for (int y = 0; y < FRAME_HEIGHT; y++)
+      for (int y = 0; y < FRAME_HEIGHT; y += STRIDE)
       {
         octomath::Vector3 dir((x - cx) / fx, (y - cy) / fy, 1.0f);
         dir.normalize();
@@ -130,47 +161,75 @@ private:
 
   int calculateUnobsVoxels(const tf::Transform &view)
   {
+    std::cout << "Calculating unobserved voxels..." << std::endl;
     octomap::point3d_list unobs_centers;
     octomap::point3d pmin = octomap::point3d(-0.2f, -0.2f, 0.0f);
     octomap::point3d pmax = octomap::point3d(0.2f, 0.2f, 0.4f);
     octree->getUnknownLeafCenters(unobs_centers, pmin, pmax);
-
+    for (const auto &centers : unobs_centers)
+    {
+      std::cout << "Unknown coords: " << centers.x() << " " << centers.y() << " " << centers.z() << std::endl;
+    }
+    // std::cout<<"Made it!"<<std::endl;
     // octomap::OcTree octree_unobs(RESOLUTION);
     // https://answers.ros.org/question/252632/how-to-correctly-build-an-octomap-using-a-series-of-registered-point-clouds/
     // octree_unobs.insertPointCloud(octomap_unobs_pc, octomap::point3d(0, 0, 0), 10.0f, false, false);
     int unobs = 0;
 
     // get tf of where the camera is pointing (view)
+
     std::vector<octomath::Vector3> raycast_vectors = calculateRayCastDirections();
+    std::cout << "num of rays to be cast: " << raycast_vectors.size() << std::endl;
+
     // need to rotate raycast_vectors to align with view
     octomap::point3d origin = octomap::point3d(view.getOrigin().getX(), view.getOrigin().getY(), view.getOrigin().getZ());
     octomath::Quaternion rotation = octomath::Quaternion(view.getRotation().w(), view.getRotation().x(), view.getRotation().y(), view.getRotation().z());
+    int count = 0;
+#pragma omp parallel for
     for (const auto &v : raycast_vectors)
     {
+      // if (count % 10000 == 0)
+      // {
+      //   std::cout << "Count: " << count << std::endl;
+      // }
+      std::cout << "Ray: " << count << std::endl;
+      count++;
       std::vector<octomap::point3d> ray;
       octomap::point3d end = origin + v * RAYCAST_RANGE;
+      std::cout << "Origin: " << origin.x() << " " << origin.y() << " " << origin.z() << std::endl;
+      std::cout << "End: " << end.x() << " " << end.y() << " " << end.z() << std::endl;
       octree->computeRay(origin, end, ray);
       for (const auto &coord : ray)
       {
+        std::cout << "Searching at this coordinate: " << coord.x() << " " << coord.y() << " " << coord.z() << std::endl;
         octomap::OcTreeNode *n = octree->search(coord);
-        if (!n)
+        if (n != NULL)
         {
+          // std::cout << "Node exists!" << std::endl;
           if (octree->isNodeOccupied(n))
           {
-            break;
+            // std::cout << "Voxel is occupied!" << std::endl;
+            break; // you've hit an occupied cell, which occludes everything behind it
+          }
+          else
+          {
+            // std::cout << "Free voxel!" << std::endl;
           }
         }
 
-        else // should be either free or unobserved by this stage
+        else // should be unobserved by this stage
         {
           std::list<octomap::point3d>::iterator it;
           it = std::find(unobs_centers.begin(), unobs_centers.end(), coord);
           if (it != unobs_centers.end())
           {
+            std::cout << "This coord is unobserved: " << it->x() << " " << it->y() << " " << it->z() << std::endl;
             unobs++;
             unobs_centers.erase(it); // remove to avoid double counting for a potential future ray
           }
         }
+
+        // Note: beware of conflating num voxels and their volume: https://answers.ros.org/question/149126/octomap-volume-estimation/
 
         // // stop if you hit an occupied cell (so you don't end up counting unobserved voxels behind occupied ones)
         // if (octree->search(r) && octree->isNodeOccupied(*it))
@@ -188,6 +247,8 @@ private:
         // }
       }
     }
+    std::cout << "Finished doing calcs!" << std::endl;
+
     return unobs;
     // if (octree != NULL)
     // {
@@ -197,6 +258,7 @@ private:
 
   tf::Transform getViewTransform(const float yaw)
   {
+    std::cout << "Getting view transform for angle: " << yaw << std::endl;
     tf::Transform view;
     tf::Quaternion q;
     q.setRPY(0.0f, 0.0f, -yaw + PI_F / 2); // point towards origin
@@ -205,23 +267,10 @@ private:
     return view;
   }
 
-  tf::Transform calculateNbv()
-  {
-    int num_views_to_consider = 6;
-    std::vector<float> yaw_angles;
-    std::vector<int> num_unobs_voxels;
-    for (int i = 0; i < num_views_to_consider; i++)
-    {
-      yaw_angles.push_back((float)i / (2.0f * PI_F));
-    }
-    for (const auto &yaw : yaw_angles)
-    {
-      int num_unobs = calculateUnobsVoxels(getViewTransform(yaw));
-      num_unobs_voxels.push_back(num_unobs);
-    }
-  }
   void octreeClbk(const octomap_msgs::Octomap &msg)
   {
+    received_octomap_msg = true;
+    // std::cout << "Receiving octomap message... " << std::endl;
     tree = octomap_msgs::binaryMsgToMap(msg);
     octree = dynamic_cast<octomap::OcTree *>(tree);
 
@@ -246,10 +295,10 @@ private:
         }
     // from http://ros-developer.com/2017/02/23/converting-pcl-point-cloud-to-ros-pcl-cloud-message-and-the-reverse/
     // make a new point cloud composed of only unobserved voxels
-    sensor_msgs::PointCloud2 unobs_voxel_msg;
-    pcl::toROSMsg(temp_data_cloud, unobs_voxel_msg);
+    // sensor_msgs::PointCloud2 unobs_voxel_msg;
+    // pcl::toROSMsg(temp_data_cloud, unobs_voxel_msg);
     // http://docs.ros.org/jade/api/octomap_ros/html/conversions_8h.html
-    octomap::pointCloud2ToOctomap(unobs_voxel_msg, octomap_unobs_pc);
+    // octomap::pointCloud2ToOctomap(unobs_voxel_msg, octomap_unobs_pc);
   }
 };
 
@@ -264,6 +313,12 @@ int main(int argc, char **argv)
   while (ros::ok())
   {
     cm.rotateCameraAboutOrigin();
+
+    // std::cout<<"Address of root node: "<<(cm.octree->getRoot())<<std::endl;
+    if (!cm.nbv_calculated && cm.received_octomap_msg)
+    {
+      tf::Transform nbv = cm.calculateNbv();
+    }
     ros::spinOnce();
 
     loop_rate.sleep();
