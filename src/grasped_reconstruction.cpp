@@ -78,7 +78,7 @@ public:
   {
     std::cout << "Calculating NBV..." << std::endl;
     tf::Transform nbv;
-    int num_views_to_consider = 6;
+    int num_views_to_consider = 1;
     std::vector<float> yaw_angles;
     std::vector<int> num_unobs_voxels;
     for (int i = 0; i < num_views_to_consider; i++)
@@ -119,6 +119,7 @@ private:
   tf::Quaternion q;
   float ROTATION_RATE = 0.0f;
   float CAMERA_OFFSET = 1.0f; // [m]
+  visualization_msgs::MarkerArray marker_array;
 
   float HFOV = PI_F / 3.0f;
   int FRAME_WIDTH = 640;
@@ -127,7 +128,7 @@ private:
   int cy = FRAME_HEIGHT / 2;
   float fx = (FRAME_WIDTH / 2.0f) / tan(HFOV / 2.0f);
   float fy = fx;
-  float RESOLUTION = 0.05f;    // [m]
+  float RESOLUTION = 0.05f;   // [m]
   float RAYCAST_RANGE = 3.0f; // [m]
 
   struct DirectedRay
@@ -166,12 +167,11 @@ private:
   {
     std::cout << "Calculating unobserved voxels..." << std::endl;
     octomap::point3d_list unobs_centers;
-    octomap::point3d pmin = octomap::point3d(-0.3f, -0.3f, 0.0f);
-    octomap::point3d pmax = octomap::point3d(0.3f, 0.3f, 0.5f);
+    octomap::point3d pmin = octomap::point3d(-0.5f, -0.2f, 0.0f);
+    octomap::point3d pmax = octomap::point3d(0.5f, 0.2f, 0.3f);
     octree->getUnknownLeafCenters(unobs_centers, pmin, pmax);
 
     { // visualization of unobserved voxels messages
-      visualization_msgs::MarkerArray marker_array;
       int count = 0;
       for (const auto &c : unobs_centers)
       {
@@ -180,7 +180,7 @@ private:
         marker.header.stamp = ros::Time();
         marker.ns = "unobs";
         marker.id = count;
-        marker.type = visualization_msgs::Marker::CUBE;
+        marker.type = visualization_msgs::Marker::SPHERE;
         marker.action = visualization_msgs::Marker::ADD;
         marker.pose.position.x = c.x();
         marker.pose.position.y = c.y();
@@ -189,14 +189,14 @@ private:
         marker.scale.y = 0.01;
         marker.scale.z = 0.01;
         marker.color.a = 1.0; // Don't forget to set the alpha!
-        marker.color.r = 0.0;
-        marker.color.g = 1.0;
+        marker.color.r = 1.0;
+        marker.color.g = 0.0;
         marker.color.b = 0.0;
         marker_array.markers.push_back(marker);
         count++;
       }
-      vis_pub.publish(marker_array);
     }
+    vis_pub.publish(marker_array);
 
     // for (const auto &centers : unobs_centers)
     // {
@@ -348,7 +348,7 @@ private:
         for (double iz = 0.0; iz < 0.5; iz += RESOLUTION)
         {
           visited++;
-          if (!octree->search(ix, iy, iz))
+          if (octree->search(ix, iy, iz) == NULL)
           {
             unobs++;
             p.x = ix;

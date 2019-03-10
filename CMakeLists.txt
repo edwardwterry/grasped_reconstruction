@@ -6,7 +6,7 @@ add_compile_options(-std=c++11)
 
 # https://stackoverflow.com/questions/37441189/locations-pclconfig-cmake-and-pcl-config-cmake-files-for-pcl-library
 set(PCL_DIR "/usr/lib/x86_64-linux-gnu/cmake/pcl/")
-
+set(octomap_DIR "/opt/ros/kinetic/share/octomap/")
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
