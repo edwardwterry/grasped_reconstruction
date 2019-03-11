@@ -43,6 +43,7 @@ public:
 
     // Convert to PCL data type
     pcl_conversions::toPCL(*cloud_msg, *cloud);
+    std::cout<<"width: "<<cloudPtr->width<<std::endl;
     // http://ros-developer.com/2017/08/03/converting-pclpclpointcloud2-to-pclpointcloud-and-reverse/
     // pcl::PointCloud<pcl::PointXYZ> *pc = new pcl::PointCloud<pcl::PointXYZ>;
     // pcl::PointCloudPtr pcPtr(pc);
@@ -55,33 +56,39 @@ public:
     // sor.filter(cloud_filtered);
     // pcl::PCLPointCloud2 point_cloud2;
 
-    pcl::PointCloud<pcl::PointXYZ> *pc = new pcl::PointCloud<pcl::PointXYZ>;
-    pcl::ConstPtr<pcl::PointCloud<pcl::PointXYZ>> pcPtr(pc);
-    // pcl::PointCloud<pcl::PointXYZ> point_cloud;
+    PointCloud *pc = new pcl::PointCloud<pcl::PointXYZ>;
+    // https://stackoverflow.com/questions/10644429/create-a-pclpointcloudptr-from-a-pclpointcloud
+    PointCloud::Ptr pcPtr(pc);
 
     pcl::fromPCLPointCloud2(*cloud, *pc);
-
-    // pcl::toPCLPointCloud2(point_cloud, point_cloud2);
+    // std::cout<<pc->front().x<<std::endl;
 
     pcl::VoxelGridOcclusionEstimation<pcl::PointXYZ> occ;
 
     occ.initializeVoxelGrid();
     occ.setInputCloud(pcPtr);
-    // occ.setLeafSize(0.1, 0.1, 0.1);
+    occ.setLeafSize(0.1, 0.1, 0.1);
+    // occ.filter(cloud_filtered);
+    Eigen::Vector3f out = occ.getMaxBoundCoordinates();
+    std::cout<<"something: "<<out.matrix()<<std::endl;
     // // occ.initializeVoxelGrid();
-    // pcl::PointCloud<pcl::PointXYZ> cloud_filtered = occ.getFilteredPointCloud();
-    // // std::vector<Eigen::Vector3i> occluded_voxels;
-    // // occ.occlusionEstimationAll(occluded_voxels);
-    // // for (const auto & voxel:occluded_voxels){
-    // //   std::cout<<"voxel(0): "<<voxel(0)<<std::endl;
-    // // }
+    PointCloud cloud_filtered = occ.getFilteredPointCloud();
+    // std::vector<Eigen::Vector3i> occluded_voxels;
+    // occ.occlusionEstimationAll(occluded_voxels);
+    // for (const auto & voxel:occluded_voxels){
+    //   std::cout<<"voxel(0): "<<voxel(0)<<std::endl;
+    // }
     // pcl::toPCLPointCloud2(cloud_filtered, cloud_filtered2);
     // // Convert to ROS data type
-    // sensor_msgs::PointCloud2 output;
-    // pcl_conversions::fromPCL(cloud_filtered2, output);
+    pcl::toPCLPointCloud2(cloud_filtered, cloud_filtered2);
 
-    // // Publish the data
-    // occ_pub.publish(output);
+    sensor_msgs::PointCloud2 output;
+
+    pcl_conversions::fromPCL(cloud_filtered2, output);
+    output.header.frame_id = "robot_base";
+
+    // Publish the data
+    occ_pub.publish(output);
   }
 };
 
