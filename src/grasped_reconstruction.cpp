@@ -40,10 +40,11 @@ public:
     pcl::PCLPointCloud2 *cloud = new pcl::PCLPointCloud2;
     pcl::PCLPointCloud2ConstPtr cloudPtr(cloud);
     pcl::PCLPointCloud2 cloud_filtered2;
+    // PointCloud cloud_filtered;
 
     // Convert to PCL data type
     pcl_conversions::toPCL(*cloud_msg, *cloud);
-    std::cout<<"width: "<<cloudPtr->width<<std::endl;
+    // std::cout<<"width: "<<cloudPtr->width<<std::endl;
     // http://ros-developer.com/2017/08/03/converting-pclpclpointcloud2-to-pclpointcloud-and-reverse/
     // pcl::PointCloud<pcl::PointXYZ> *pc = new pcl::PointCloud<pcl::PointXYZ>;
     // pcl::PointCloudPtr pcPtr(pc);
@@ -61,31 +62,38 @@ public:
     PointCloud::Ptr pcPtr(pc);
 
     pcl::fromPCLPointCloud2(*cloud, *pc);
-    // std::cout<<pc->front().x<<std::endl;
 
     pcl::VoxelGridOcclusionEstimation<pcl::PointXYZ> occ;
 
-    occ.initializeVoxelGrid();
     occ.setInputCloud(pcPtr);
-    occ.setLeafSize(0.1, 0.1, 0.1);
+    occ.setLeafSize(0.025, 0.025, 0.025);
+    occ.initializeVoxelGrid();
     // occ.filter(cloud_filtered);
-    Eigen::Vector3f out = occ.getMaxBoundCoordinates();
-    std::cout<<"something: "<<out.matrix()<<std::endl;
+    // Eigen::Vector3f out = occ.getMaxBoundCoordinates();
+    // std::cout<<"getMaxBoundCoordinates: "<<out.matrix()<<std::endl;
     // // occ.initializeVoxelGrid();
+    Eigen::Vector3i box = occ.getMaxBoxCoordinates();
+
     PointCloud cloud_filtered = occ.getFilteredPointCloud();
-    // std::vector<Eigen::Vector3i> occluded_voxels;
-    // occ.occlusionEstimationAll(occluded_voxels);
-    // for (const auto & voxel:occluded_voxels){
-    //   std::cout<<"voxel(0): "<<voxel(0)<<std::endl;
-    // }
+    std::vector<Eigen::Vector3i> occluded_voxels;
+    occ.occlusionEstimationAll(occluded_voxels);
+    std::cout<<"Proportion occluded: "<<(float)occluded_voxels.size()/(float)(box(0)*box(1)*box(2))<<std::endl;
+    PointCloud cloud_occluded; 
+    for (const auto & voxel:occluded_voxels){
+      // std::cout<<"voxel(0): "<<voxel(0)<<std::endl;
+      Eigen::Vector4f coord = occ.getCentroidCoordinate(voxel);
+      cloud_occluded.push_back(pcl::PointXYZ(coord(0), coord(1), coord(2)));
+    }
     // pcl::toPCLPointCloud2(cloud_filtered, cloud_filtered2);
     // // Convert to ROS data type
-    pcl::toPCLPointCloud2(cloud_filtered, cloud_filtered2);
+    pcl::toPCLPointCloud2(cloud_occluded, cloud_filtered2);
 
     sensor_msgs::PointCloud2 output;
 
     pcl_conversions::fromPCL(cloud_filtered2, output);
-    output.header.frame_id = "robot_base";
+    output.header.frame_id = "lens_link";
+    // output.height = 640;
+    // output.width = 480;
 
     // Publish the data
     occ_pub.publish(output);
