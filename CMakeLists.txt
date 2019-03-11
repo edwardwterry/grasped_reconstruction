@@ -19,7 +19,9 @@ find_package(catkin REQUIRED
     visualization_msgs
     octomap_ros REQUIRED
     octomap_msgs REQUIRED
-    PCL REQUIRED)
+    #PCL REQUIRED)
+    )
+find_package (PCL REQUIRED COMPONENTS)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
@@ -114,6 +116,7 @@ find_package(gazebo REQUIRED)
 catkin_package(
   DEPENDS 
     gazebo_ros
+    PCL
 )
 
 ###########
