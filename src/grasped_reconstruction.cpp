@@ -41,52 +41,68 @@ public:
     _n = n;
     pc_sub = _n.subscribe("/camera/depth/points", 1, &GraspedReconstruction::pcClbk, this);
     ch_sub = _n.subscribe("/extract_plane_indices/output", 1, &GraspedReconstruction::convexHullClbk, this);
+    hm_sub = _n.subscribe("/camera/depth/points", 1, &GraspedReconstruction::heightMapClbk, this);
     occ_pub = n.advertise<sensor_msgs::PointCloud2>("occluded_voxels", 1);
     ch_pub = n.advertise<pcl_msgs::PolygonMesh>("convex_hull_mesh", 1);
   }
   ros::NodeHandle _n;
-  ros::Subscriber pc_sub, ch_sub;
+  ros::Subscriber pc_sub, ch_sub, hm_sub;
   ros::Publisher occ_pub, ch_pub;
 
   void heightMapClbk(const sensor_msgs::PointCloud2ConstPtr &cloud_msg)
   {
-    // Container for original & filtered data
-    pcl::PCLPointCloud2 *cloud = new pcl::PCLPointCloud2;
-    pcl::PCLPointCloud2ConstPtr cloudPtr(cloud);
+    // // Container for original & filtered data
+    pcl::PCLPointCloud2 *cloud_pcl2 = new pcl::PCLPointCloud2;
+    pcl::PCLPointCloud2ConstPtr cloudPtr(cloud_pcl2);
 
     // Convert to PCL data type
-    pcl_conversions::toPCL(*cloud_msg, *cloud);
+    pcl_conversions::toPCL(*cloud_msg, *cloud_pcl2);
     PointCloud *pc = new pcl::PointCloud<pcl::PointXYZ>;
     // https://stackoverflow.com/questions/10644429/create-a-pclpointcloudptr-from-a-pclpointcloud
     PointCloud::Ptr pcPtr(pc);
+    pcl::fromPCLPointCloud2(*cloud_pcl2, *pc);
+    PointCloud::Ptr no_nan_cloud(new PointCloud);
+    pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+    pcl::removeNaNFromPointCloud(*pcPtr, *no_nan_cloud, inliers->indices);
+    // // std::cout<<"Cloud size: "<<pc->size()<<std::endl;
 
     // http://pointclouds.org/documentation/tutorials/planar_segmentation.php
     pcl::ModelCoefficients::Ptr ground_coeffs(new pcl::ModelCoefficients);
-    pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+    // pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
     // Create the segmentation object
     pcl::SACSegmentation<pcl::PointXYZ> seg;
-    // Optional
-    seg.setOptimizeCoefficients(true);
-    // Mandatory
+    seg.setOptimizeCoefficients(false);
     seg.setModelType(pcl::SACMODEL_PLANE);
     seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setDistanceThreshold(0.01);
+    seg.setInputCloud(no_nan_cloud);
+    seg.setDistanceThreshold(100.0);
 
-    seg.setInputCloud(pcPtr);
     seg.segment(*inliers, *ground_coeffs);
-    Eigen::Vector4f ground_coeffs_eigen = Eigen::Vector4f(ground_coeffs->values[0], ground_coeffs->values[1], ground_coeffs->values[2], ground_coeffs->values[3]);
+    // std::cout << "Inliers size: " << inliers->indices.size() << std::endl;
+    // ground_coeffs
+    Eigen::VectorXf ground_coeffs_eigen(4);
+    ground_coeffs_eigen << ground_coeffs->values[0], ground_coeffs->values[1], ground_coeffs->values[2], ground_coeffs->values[3];
+    // std::cout<<"ground coeffs: "<<ground_coeffs_eigen.matrix()<<std::endl;
+    // Eigen::Vector4f ground_coeffs_eigen;
+    // ground_coeffs_eigen << 0.0, 0.0, 1.0, -0.76;
     float sqrt_ground_coeffs = ground_coeffs_eigen.norm();
     // create person cluster
     bool head_centroid = false;
     bool vertical = false;
     // pcl::people::PersonCluster<pcl::PointXYZ> *person_cluster = new pcl::people::PersonCluster<pcl::PointXYZ>(pcPtr, *inliers, ground_coeffs_eigen, sqrt_ground_coeffs, head_centroid, vertical);
-    pcl::people::PersonCluster<pcl::PointXYZ> person_cluster(pcPtr, *inliers, ground_coeffs_eigen, sqrt_ground_coeffs, head_centroid, vertical);
+    pcl::people::PersonCluster<pcl::PointXYZ> person_cluster(no_nan_cloud, *inliers, ground_coeffs_eigen, sqrt_ground_coeffs, head_centroid, vertical);
 
     // pcl::people::HeightMap2D<pcl::PointXYZ>::PointCloudPtr hm_ptr(new pcl::people::HeightMap2D<pcl::PointXYZ>);
-    pcl::people::HeightMap2D<pcl::PointXYZ> hm;// (new pcl::people::HeightMap2D<pcl::PointXYZ>);
+    pcl::people::HeightMap2D<pcl::PointXYZ> hm; // (new pcl::people::HeightMap2D<pcl::PointXYZ>);
+    hm.setInputCloud(no_nan_cloud);
+    hm.setGround(ground_coeffs_eigen);
     hm.compute(person_cluster);
     // std::vector<int> height_map = hm_ptr->getHeightMap();
     std::vector<int> height_map = hm.getHeightMap();
+    for (const auto &h : height_map)
+    {
+      std::cout << h << std::endl;
+    }
     // hm_ptr->setInputCloud(pcPtr);
     // hm_ptr->setGround(ground_coeffs_eigen);
     // get bounding box
@@ -95,6 +111,63 @@ public:
     // compute
     // getHeightMap
     // create
+
+    // from www
+    // pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+
+    // // Fill in the cloud data
+    // cloud->width = 15;
+    // cloud->height = 1;
+    // cloud->points.resize(cloud->width * cloud->height);
+
+    // // Generate the data
+    // for (size_t i = 0; i < cloud->points.size(); ++i)
+    // {
+    //   cloud->points[i].x = 1024 * rand() / (RAND_MAX + 1.0f);
+    //   cloud->points[i].y = 1024 * rand() / (RAND_MAX + 1.0f);
+    //   cloud->points[i].z = 1.0;
+    // }
+
+    // // Set a few outliers
+    // cloud->points[0].z = 2.0;
+    // cloud->points[3].z = -2.0;
+    // cloud->points[6].z = 4.0;
+
+    // std::cerr << "Point pcPtr data: " << no_nan_cloud->points.size() << " points" << std::endl;
+    // for (size_t i = 0; i < no_nan_cloud->points.size(); ++i)
+    //   std::cerr << "    " << no_nan_cloud->points[i].x << " "
+    //             << no_nan_cloud->points[i].y << " "
+    //             << no_nan_cloud->points[i].z << std::endl;
+
+    // pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+    // // pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+    // // Create the segmentation object
+    // pcl::SACSegmentation<pcl::PointXYZ> seg;
+    // // Optional
+    // seg.setOptimizeCoefficients(true);
+    // // Mandatory
+    // seg.setModelType(pcl::SACMODEL_PLANE);
+    // seg.setMethodType(pcl::SAC_RANSAC);
+    // seg.setDistanceThreshold(0.01);
+
+    // seg.setInputCloud(no_nan_cloud);
+    // seg.segment(*inliers, *coefficients);
+
+    // if (inliers->indices.size() == 0)
+    // {
+    //   PCL_ERROR("Could not estimate a planar model for the given dataset.");
+    // }
+
+    // std::cerr << "Model coefficients: " << coefficients->values[0] << " "
+    //           << coefficients->values[1] << " "
+    //           << coefficients->values[2] << " "
+    //           << coefficients->values[3] << std::endl;
+
+    // std::cerr << "Model inliers: " << inliers->indices.size() << std::endl;
+    // for (size_t i = 0; i < inliers->indices.size(); ++i)
+    //   std::cerr << inliers->indices[i] << "    " << no_nan_cloud->points[inliers->indices[i]].x << " "
+    //             << no_nan_cloud->points[inliers->indices[i]].y << " "
+    //             << no_nan_cloud->points[inliers->indices[i]].z << std::endl;
   }
 
   void convexHullClbk(const sensor_msgs::PointCloud2ConstPtr &cloud_msg)
