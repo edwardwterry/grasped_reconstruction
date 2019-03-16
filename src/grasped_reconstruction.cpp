@@ -4,7 +4,7 @@
 #include <tf/transform_broadcaster.h>
 #include <tf/transform_listener.h>
 #include <math.h>
-#include <visualization_msgs/MarkerArray.h>
+// #include <visualization_msgs/MarkerArray.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/conversions.h>
 #include <std_msgs/Float32.h>
@@ -14,10 +14,10 @@
 #include <pcl/point_types.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/filters/voxel_grid.h>
-#include <pcl/surface/convex_hull.h>
+// #include <pcl/surface/convex_hull.h>
 #include <pcl/common/common.h>
-#include <pcl/filters/voxel_grid_occlusion_estimation.h>
-#include <pcl_msgs/PolygonMesh.h>
+// #include <pcl/filters/voxel_grid_occlusion_estimation.h>
+// #include <pcl_msgs/PolygonMesh.h>
 // #include <mesh_msgs/TriangleMesh.h>
 #include <Eigen/Dense>
 #include <pcl/people/person_cluster.h>
@@ -75,7 +75,7 @@ public:
     seg.setModelType(pcl::SACMODEL_PLANE);
     seg.setMethodType(pcl::SAC_RANSAC);
     seg.setInputCloud(no_nan_cloud);
-    seg.setDistanceThreshold(100.0);
+    seg.setDistanceThreshold(0.05);
 
     seg.segment(*inliers, *ground_coeffs);
     // std::cout << "Inliers size: " << inliers->indices.size() << std::endl;
@@ -88,21 +88,32 @@ public:
     float sqrt_ground_coeffs = ground_coeffs_eigen.norm();
     // create person cluster
     bool head_centroid = false;
-    bool vertical = false;
+    bool vertical = true;
     // pcl::people::PersonCluster<pcl::PointXYZ> *person_cluster = new pcl::people::PersonCluster<pcl::PointXYZ>(pcPtr, *inliers, ground_coeffs_eigen, sqrt_ground_coeffs, head_centroid, vertical);
     pcl::people::PersonCluster<pcl::PointXYZ> person_cluster(no_nan_cloud, *inliers, ground_coeffs_eigen, sqrt_ground_coeffs, head_centroid, vertical);
 
     // pcl::people::HeightMap2D<pcl::PointXYZ>::PointCloudPtr hm_ptr(new pcl::people::HeightMap2D<pcl::PointXYZ>);
     pcl::people::HeightMap2D<pcl::PointXYZ> hm; // (new pcl::people::HeightMap2D<pcl::PointXYZ>);
+    float bin_size = 0.05f;
     hm.setInputCloud(no_nan_cloud);
+    hm.setMinimumDistanceBetweenMaxima(0.02f);
+    hm.setBinSize(bin_size);
     hm.setGround(ground_coeffs_eigen);
     hm.compute(person_cluster);
     // std::vector<int> height_map = hm_ptr->getHeightMap();
-    std::vector<int> height_map = hm.getHeightMap();
-    for (const auto &h : height_map)
+    std::vector<float> height_map = hm.getHeightMap();
+    int num_r, num_c;
+    num_r = size_t((person_cluster.getMax()(0) - person_cluster.getMin()(0)) / bin_size) + 1;
+    num_c = size_t((person_cluster.getMax()(1) - person_cluster.getMin()(1)) / bin_size) + 1;
+    Eigen::MatrixXd m(num_r, num_c);
+    for (uint32_t i = 0; i < height_map.size(); i++)
     {
-      std::cout << h << std::endl;
+      int r, c;
+      c = i % num_c;
+      r = i / num_c;
+      m(r,c) = height_map[i];
     }
+    std::cout << m.matrix() << std::endl;
     // hm_ptr->setInputCloud(pcPtr);
     // hm_ptr->setGround(ground_coeffs_eigen);
     // get bounding box
