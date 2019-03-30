@@ -16,7 +16,7 @@ public:
     // ch_pub = n.advertise<pcl_msgs::PolygonMesh>("convex_hull_mesh", 1);
     // hm_pub = n.advertise<sensor_msgs::PointCloud2>("object_without_table", 1);
     coeff_pub = n.advertise<pcl_msgs::ModelCoefficients>("output", 1);
-
+    plane_pub = n.advertise<sensor_msgs::PointCloud2>("plane_removed", 1);
     try
     {
       ros::Time now = ros::Time::now();
@@ -25,13 +25,14 @@ public:
       listener.lookupTransform("/world", "/lens_link",
                                now, world_T_lens_link_tf);
     }
-    catch(tf::TransformException ex){
-      ROS_ERROR("%s",ex.what());
+    catch (tf::TransformException ex)
+    {
+      ROS_ERROR("%s", ex.what());
     }
   }
   ros::NodeHandle _n;
   ros::Subscriber pc_sub;
-  ros::Publisher coeff_pub;
+  ros::Publisher coeff_pub, plane_pub;
   tf::TransformListener listener;
   tf::StampedTransform world_T_lens_link_tf;
 
@@ -39,14 +40,14 @@ public:
   {
     // http://wiki.ros.org/pcl/Tutorials#pcl.2BAC8-Tutorials.2BAC8-hydro.sensor_msgs.2BAC8-PointCloud2
     // Convert the sensor_msgs/PointCloud2 data to pcl/PointCloud
-    sensor_msgs::PointCloud2Ptr msg_transformed (new sensor_msgs::PointCloud2());
+    sensor_msgs::PointCloud2Ptr msg_transformed(new sensor_msgs::PointCloud2());
     std::string target_frame("world");
     pcl_ros::transformPointCloud(target_frame, *msg, *msg_transformed, listener);
-    PointCloud cloud;
-    pcl::fromROSMsg(*msg_transformed, cloud);
+    PointCloud::Ptr cloud(new PointCloud());
+    pcl::fromROSMsg(*msg_transformed, *cloud);
 
     pcl::ModelCoefficients coefficients;
-    pcl::PointIndices inliers;
+    pcl::PointIndices::Ptr inliers(new pcl::PointIndices());
     // Create the segmentation object
     pcl::SACSegmentation<pcl::PointXYZ> seg;
     // Optional
@@ -56,13 +57,23 @@ public:
     seg.setMethodType(pcl::SAC_RANSAC);
     seg.setDistanceThreshold(0.01);
 
-    seg.setInputCloud(cloud.makeShared());
-    seg.segment(inliers, coefficients);
+    seg.setInputCloud(cloud);
+    seg.segment(*inliers, coefficients);
 
     // Publish the model coefficients
     pcl_msgs::ModelCoefficients ros_coefficients;
     pcl_conversions::fromPCL(coefficients, ros_coefficients);
     coeff_pub.publish(ros_coefficients);
+
+    pcl::ExtractIndices<pcl::PointXYZ> extract;
+    extract.setInputCloud(cloud);
+    extract.setIndices(inliers);
+    extract.setNegative(true);
+    extract.filter(*cloud);
+
+    sensor_msgs::PointCloud2 output;
+    pcl::toROSMsg(*cloud, output);
+    plane_pub.publish(output);
   }
 
   void processPointCloud()
