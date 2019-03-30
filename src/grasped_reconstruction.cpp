@@ -46,6 +46,14 @@ public:
     PointCloud::Ptr cloud(new PointCloud());
     pcl::fromROSMsg(*msg_transformed, *cloud);
 
+    // remove the ground plane
+    pcl::PassThrough<pcl::PointXYZ> pass;
+    pass.setInputCloud(cloud);
+    pass.setFilterFieldName("z");
+    pass.setFilterLimits(-0.5, 0.5);
+    pass.setFilterLimitsNegative (true);
+    pass.filter(*cloud);
+
     pcl::ModelCoefficients coefficients;
     pcl::PointIndices::Ptr inliers(new pcl::PointIndices());
     // Create the segmentation object
