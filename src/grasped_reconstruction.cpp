@@ -17,6 +17,7 @@ public:
     // hm_pub = n.advertise<sensor_msgs::PointCloud2>("object_without_table", 1);
     coeff_pub = n.advertise<pcl_msgs::ModelCoefficients>("output", 1);
     plane_pub = n.advertise<sensor_msgs::PointCloud2>("plane_removed", 1);
+    bb_pub = n.advertise<visualization_msgs::Marker>("bbox", 1);
     try
     {
       ros::Time now = ros::Time::now();
@@ -32,7 +33,7 @@ public:
   }
   ros::NodeHandle _n;
   ros::Subscriber pc_sub;
-  ros::Publisher coeff_pub, plane_pub;
+  ros::Publisher coeff_pub, plane_pub, bb_pub;
   tf::TransformListener listener;
   tf::StampedTransform world_T_lens_link_tf;
 
@@ -47,11 +48,12 @@ public:
     pcl::fromROSMsg(*msg_transformed, *cloud);
 
     // remove the ground plane
+    // http://pointclouds.org/documentation/tutorials/passthrough.php
     pcl::PassThrough<pcl::PointXYZ> pass;
     pass.setInputCloud(cloud);
     pass.setFilterFieldName("z");
     pass.setFilterLimits(-0.5, 0.5);
-    pass.setFilterLimitsNegative (true);
+    pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
     pass.filter(*cloud);
 
     pcl::ModelCoefficients coefficients;
@@ -65,6 +67,7 @@ public:
     seg.setMethodType(pcl::SAC_RANSAC);
     seg.setDistanceThreshold(0.01);
 
+    // remove the tabletop
     seg.setInputCloud(cloud);
     seg.segment(*inliers, coefficients);
 
@@ -79,9 +82,38 @@ public:
     extract.setNegative(true);
     extract.filter(*cloud);
 
+    pass.setFilterFieldName("x");
+    pass.setFilterLimits(-3, -0.2);
+    pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
+    pass.filter(*cloud);
+
     sensor_msgs::PointCloud2 output;
     pcl::toROSMsg(*cloud, output);
     plane_pub.publish(output);
+
+    pcl::PointXYZ min, max;
+    pcl::getMinMax3D(*cloud, min, max);
+
+    visualization_msgs::Marker marker;
+    marker.header.frame_id = "world";
+    marker.header.stamp = ros::Time();
+    marker.type = visualization_msgs::Marker::CUBE;
+    marker.action = visualization_msgs::Marker::ADD;
+    marker.pose.position.x = 0.5f * (max.x + min.x);
+    marker.pose.position.y = 0.5f * (max.y + min.y);
+    marker.pose.position.z = 0.5f * (max.z - coefficients.values[3]);
+    marker.pose.orientation.x = 0.0;
+    marker.pose.orientation.y = 0.0;
+    marker.pose.orientation.z = 0.0;
+    marker.pose.orientation.w = 1.0;
+    marker.scale.x = max.x - min.x;
+    marker.scale.y = max.y - min.y;
+    marker.scale.z = max.z + coefficients.values[3];
+    marker.color.a = 0.5; // Don't forget to set the alpha!
+    marker.color.r = 1.0;
+    marker.color.g = 0.5;
+    marker.color.b = 0.0;
+    bb_pub.publish(marker);
   }
 
   void processPointCloud()
