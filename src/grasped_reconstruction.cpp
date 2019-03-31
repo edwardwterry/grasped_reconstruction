@@ -60,7 +60,7 @@ public:
     pass.filter(*cloud);
 
     pass.setFilterFieldName("x");
-    pass.setFilterLimits(-0.2, 0.4);
+    pass.setFilterLimits(-0.15, 0.35);
     pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
     pass.filter(*cloud);
 
@@ -69,6 +69,12 @@ public:
     pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
     pass.filter(*cloud);
     std::cout << "Removed floor" << std::endl;
+
+    // Downsample this pc
+    pcl::VoxelGrid<pcl::PointXYZ> downsample;
+    downsample.setInputCloud(cloud);
+    downsample.setLeafSize (0.005f, 0.005f, 0.005f);
+    downsample.filter(*cloud);
 
     sensor_msgs::PointCloud2 tabletop_output;
     pcl::toROSMsg(*cloud, tabletop_output);
