@@ -73,7 +73,7 @@ public:
     // Downsample this pc
     pcl::VoxelGrid<pcl::PointXYZ> downsample;
     downsample.setInputCloud(cloud);
-    downsample.setLeafSize (0.005f, 0.005f, 0.005f);
+    downsample.setLeafSize (0.01f, 0.01f, 0.01f);
     downsample.filter(*cloud);
 
     sensor_msgs::PointCloud2 tabletop_output;
