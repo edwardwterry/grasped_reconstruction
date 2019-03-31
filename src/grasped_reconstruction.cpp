@@ -60,12 +60,12 @@ public:
     pass.filter(*cloud);
 
     pass.setFilterFieldName("x");
-    pass.setFilterLimits(-0.15, 0.35);
+    pass.setFilterLimits(-0.1, 0.3);
     pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
     pass.filter(*cloud);
 
     pass.setFilterFieldName("y");
-    pass.setFilterLimits(-0.3, 0.3);
+    pass.setFilterLimits(-0.1, 0.1);
     pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
     pass.filter(*cloud);
     std::cout << "Removed floor" << std::endl;
