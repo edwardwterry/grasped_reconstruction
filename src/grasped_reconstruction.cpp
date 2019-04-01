@@ -12,6 +12,7 @@ public:
     // ch_sub = _n.subscribe("/extract_plane_indices/output", 1, &GraspedReconstruction::convexHullClbk, this);
     // hm_sub = _n.subscribe("/camera/depth/points", 1, &GraspedReconstruction::heightMapClbk, this);
     pc_sub = _n.subscribe("/camera/depth/points", 1, &GraspedReconstruction::pcClbk, this);
+    gm_sub = _n.subscribe("/elevation_mapping/elevation_map", 1, &GraspedReconstruction::gmClbk, this);
     // occ_pub = n.advertise<sensor_msgs::PointCloud2>("occluded_voxels", 1);
     // ch_pub = n.advertise<pcl_msgs::PolygonMesh>("convex_hull_mesh", 1);
     // hm_pub = n.advertise<sensor_msgs::PointCloud2>("object_without_table", 1);
@@ -19,6 +20,8 @@ public:
     object_pub = n.advertise<sensor_msgs::PointCloud2>("segmented_object", 1);
     tabletop_pub = n.advertise<sensor_msgs::PointCloud2>("tabletop", 1);
     bb_pub = n.advertise<visualization_msgs::Marker>("bbox", 1);
+    image_transport::ImageTransport it(n);
+    hm_im_pub = it.advertise("height_map_image", 1);
     try
     {
       ros::Time now = ros::Time::now();
@@ -34,8 +37,9 @@ public:
     std::cout << "robot_base to lens_link received" << std::endl;
   }
   ros::NodeHandle _n;
-  ros::Subscriber pc_sub;
+  ros::Subscriber pc_sub, gm_sub;
   ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub;
+  image_transport::Publisher hm_im_pub;
   tf::TransformListener listener;
   tf::StampedTransform world_T_lens_link_tf;
 
@@ -73,7 +77,7 @@ public:
     // Downsample this pc
     pcl::VoxelGrid<pcl::PointXYZ> downsample;
     downsample.setInputCloud(cloud);
-    downsample.setLeafSize (0.01f, 0.01f, 0.01f);
+    downsample.setLeafSize(0.01f, 0.01f, 0.01f);
     downsample.filter(*cloud);
 
     sensor_msgs::PointCloud2 tabletop_output;
@@ -153,8 +157,29 @@ public:
     }
   }
 
-  void processPointCloud()
+  void gmClbk(const grid_map_msgs::GridMap::ConstPtr &msg)
   {
+    cv_bridge::CvImagePtr cvImage(new cv_bridge::CvImage);
+    grid_map::GridMap gridMap;
+    ROS_INFO("%s", "here1");
+    grid_map::GridMapRosConverter::fromMessage(*msg, gridMap);
+    ROS_INFO("%s", "here2");
+
+    // std::string layer("elevation");
+    // std::cout<<msg->layers[0]<<std::endl;
+    std::string layer = msg->layers[0];
+    grid_map::GridMapRosConverter::toCvImage(gridMap, layer, "mono8", *cvImage);
+    ROS_INFO("%s", "here3");
+
+    sensor_msgs::Image ros_image;
+    cvImage->toImageMsg(ros_image);
+    ros_image.encoding = "mono8";
+    ROS_INFO("%s", "here4");
+
+    ros_image.header = std_msgs::Header();
+    ros_image.header.stamp = ros::Time::now();
+    hm_im_pub.publish(ros_image);
+    ROS_INFO("%s", "here5");
   }
 };
 
@@ -167,7 +192,6 @@ int main(int argc, char **argv)
   GraspedReconstruction gr(n);
   while (ros::ok())
   {
-    gr.processPointCloud();
     ros::spinOnce();
     loop_rate.sleep();
   }

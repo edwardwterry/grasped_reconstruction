@@ -3,7 +3,7 @@ project(grasped_reconstruction)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++11)
-
+set(OpenCV_DIR /usr/local/share/OpenCV/)
 # https://stackoverflow.com/questions/37441189/locations-pclconfig-cmake-and-pcl-config-cmake-files-for-pcl-library
 set(PCL_DIR "/usr/lib/x86_64-linux-gnu/cmake/pcl/")
 set(octomap_DIR "/opt/ros/kinetic/share/octomap/")
@@ -14,12 +14,17 @@ find_package(catkin REQUIRED
     octomap REQUIRED
     gazebo_ros
     gazebo_msgs
+    grid_map_core
+    grid_map_ros
+    grid_map_msgs
     std_msgs
     pcl_ros
     visualization_msgs
     octomap_ros REQUIRED
     octomap_msgs REQUIRED
     #PCL REQUIRED)
+    OpenCV REQUIRED
+    image_transport
     )
 find_package (PCL REQUIRED COMPONENTS)
 
@@ -117,6 +122,10 @@ catkin_package(
   DEPENDS 
     gazebo_ros
     PCL
+    grid_map_core
+    grid_map_ros
+    grid_map_msgs
+    cv_bridge
 )
 
 ###########
@@ -164,6 +173,7 @@ target_link_libraries(${PROJECT_NAME}
   ${catkin_LIBRARIES}
   ${GAZEBO_LIBRARIES}
   ${PCL_LIBRARIES}
+  ${OpenCV_LIBS}
 )
 
 #############
