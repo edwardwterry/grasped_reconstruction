@@ -21,14 +21,14 @@ import os
 class GraspSelection:
 
     def __init__(self):
-        self.eef_pose_pub = rospy.Publisher("/eef_pose", Pose)
+        self.eef_pose_pub = rospy.Publisher("/eef_pose", Pose, queue_size=1)
         self.hm_sub = rospy.Subscriber("/height_map_image",
                                        Image, self.callback,  queue_size=1)
         self.bridge = CvBridge()
-        self.meth = 'cv2.TM_CCOEFF'
+        # self.meth = 'cv2.TM_CCOEFF'
         self.sample_point_spacing = 0.03  # [m]
         self.sample_points_per_side = 3
-        self.height_map_resolution = 0.01  # need to manually verify this
+        self.height_map_resolution = 0.01  # [m] need to manually verify this
         self.model = None
         self.model_path = "/home/et/ind_study_ws/src/grasped_reconstruction/scripts/grasp_selection.pkl"
 
@@ -46,7 +46,8 @@ class GraspSelection:
         # eef_pose.orientation.y =
         # eef_pose.orientation.z =
         # eef_pose.orientation.w =s
-        eef_pose_pub.publish(eef_pose)
+        # self.eef_pose_pub.publish(eef_pose)
+        self.selectGrasp(cv_image)
 
     def generateSampleMidpoints(self, rows, cols):
         stride = int(self.sample_point_spacing / self.height_map_resolution)
@@ -54,54 +55,62 @@ class GraspSelection:
         for r in range(stride - 1, rows - stride + 1):
             for c in range(stride - 1, cols - stride + 1):
                 midpoints.append((r, c))
-        return generateGridAroundMidpoints(midpoints, stride)
+                # print (r, c)
+        return self.generateGridAroundMidpoints(midpoints, stride)
 
     def generateGridAroundMidpoints(self, midpoints, stride):
         # row-major
         grid = []
         offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 0),
-                    (0, 1), (1, -1), (1, 0), (1, 1)]
-        for pt, offset in zip(midpoints, offsets):
-            grid.append((pt[0] * stride * offset[0]), (pt[1] * stride * offset[1]))
+                   (0, 1), (1, -1), (1, 0), (1, 1)]
+        for pt in midpoints:
+            print "\n"
+            for offset in offsets:
+                grid.append(((pt[0] + (stride - 1) * offset[0]),
+                             (pt[1] + (stride - 1) * offset[1])))
+                print((pt[0] + (stride - 1) * offset[0]),
+                      (pt[1] + (stride - 1) * offset[1]))
         return grid
 
     def selectGrasp(self, cv_image):
-        (rows, cols, _) = cv_image.shape
-        sample_grid = generateSampleMidpoints(rows, cols)
+        dims = cv_image.shape
+        rows = dims[0]
+        cols = dims[1]
+        sample_grid = self.generateSampleMidpoints(rows, cols)
         # just do non-rotated case for now
 
-        angles=np.arange(0, 180, 10)
+        angles = np.arange(0, 180, 10)
 
         for angle in angles:
-            # rotate template by angle
-            rot=cv2.getRotationMatrix2D((w/2, h/2), angle, 1)
-            image_rot=cv2.warpAffine(
-                im, rot, im.shape[::-1], borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-            img=img2.copy()
-            method=eval(meth)
+            # rotate image by angle
+            rot = cv2.getRotationMatrix2D((rows/2, cols/2), angle, 1)
+            image_rot = cv2.warpAffine(
+                cv_image, rot, cv_image.shape[::-1], borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+            # img=img2.copy()
+            # method=eval(meth)
 
             # Apply template Matching
-            res=cv2.matchTemplate(img, template_rot, method)
-            min_val, max_val, min_loc, max_loc=cv2.minMaxLoc(res)
+            # res=cv2.matchTemplate(img, template_rot, method)
+            # min_val, max_val, min_loc, max_loc=cv2.minMaxLoc(res)
 
     def loadModel(self):
         # https://machinelearningmastery.com/save-load-machine-learning-models-python-scikit-learn/
-        self.model=pickle.load(open(self.model_path, 'rb'))
+        self.model = pickle.load(open(self.model_path, 'rb'))
 
 
-model=LogisticRegression()
-model.fit(X_train, Y_train)
-# save the model to disk
-filename='finalized_model.sav'
-pickle.dump(model, open(filename, 'wb'))
-
+# model=LogisticRegression()
+# model.fit(X_train, Y_train)
+# # save the model to disk
+# filename='finalized_model.sav'
+# pickle.dump(model, open(filename, 'wb'))
 
 
 def main(args):
-    gs=GraspSelection()
+    gs = GraspSelection()
     rospy.init_node('grasp_selection', anonymous=True)
     while True:
         rospy.spin()
+
 
 if __name__ == '__main__':
     main(sys.argv)
