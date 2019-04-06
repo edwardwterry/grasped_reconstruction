@@ -39,10 +39,10 @@ class GraspDataCollection:
         self.current_trial_no = 0
         self.object_name = 'cube1'
         self.planning_group_name = 'Arm'
-        self.pre_grasp_height = 0.85
-        self.post_grasp_height = 0.77
+        self.pre_grasp_height = 1.0
+        self.post_grasp_height = 1.0 # 0.77
         self.lift_height = 1.0
-        self.joint_angle_tolerance = 0.001 # 0.0001?
+        self.joint_angle_tolerance = 0.1 # 0.0001?
         self.reference_frame = 'world'
         self.model_name = 'jaco_on_table'
         self.palm_link = 'jaco_fingers_base_link'
@@ -163,12 +163,14 @@ class GraspDataCollection:
             ik.ik_link_name = self.palm_link
             ik.robot_state = rs
             ik.pose_stamped = self.generate_grasp_pose()
-            # ik.timeout.secs = 0.0  # [s]
-            # ik.attempts = 100
-            # print '\nIK message:', ik
+            ik.timeout.secs = 3.0  # [s]
+            ik.attempts = 100
+            print '\nIK message:', ik
             res = req(ik)
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
+        # print res
+        return res.solution.joint_state
 
     def load_joint_properties(self):
         if self.verbose:
@@ -223,22 +225,22 @@ class GraspDataCollection:
         return ps
 
     def move_to_state(self, joint_states):
+        print self.joint_states
         print joint_states
         if self.verbose:
             print 'Moving to next state'
         mpr = MotionPlanRequest()
         con = Constraints()
-        for name, val in self.joint_states.items():
+        for name, val in zip(joint_states.name, joint_states.position):
             if name != self.joint_to_exclude:
                 jc = JointConstraint()
                 jc.joint_name = name
-                jc.position = val[0]
+                jc.position = val
                 jc.tolerance_above = self.joint_angle_tolerance
                 jc.tolerance_below = self.joint_angle_tolerance
                 jc.weight = 1.0
                 con.joint_constraints.append(jc)
-        mpr.workspace_parameters.min_corner = Vector3(-10, -10, -10)
-        mpr.workspace_parameters.max_corner = Vector3(10, 10, 10)
+        print con
         mpr.goal_constraints = [con]
         mpr.group_name = self.planning_group_name
         mpr.allowed_planning_time = 3.0  # [s]
@@ -257,6 +259,7 @@ class GraspDataCollection:
         # http://docs.ros.org/diamondback/api/control_msgs/html/index-msg.html
         goal = FollowJointTrajectoryGoal()
         goal.trajectory = traj.joint_trajectory
+        print traj.joint_trajectory
         client.send_goal(goal)
         client.wait_for_result(rospy.Duration.from_sec(5.0))
         # http://docs.ros.org/api/actionlib/html/classactionlib_1_1simple__action__client_1_1SimpleActionClient.html
