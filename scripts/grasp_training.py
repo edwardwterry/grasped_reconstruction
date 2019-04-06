@@ -18,6 +18,7 @@ from moveit_msgs.srv import GetPositionIK
 from moveit_msgs.msg import PositionIKRequest
 from moveit_msgs.msg import RobotState
 from moveit_msgs.srv import GetPositionFK
+from moveit_msgs.srv import GetMotionPlan
 from moveit_msgs.msg import MotionPlanRequest, Constraints, JointConstraint
 # from sensor_msgs.msg import JointState
 import math
@@ -61,7 +62,7 @@ class GraspDataCollection:
                                        Image, self.hm_clbk,  queue_size=1)
         self.mpr_pub = rospy.Publisher(
             "/move_group/motion_plan_request", MotionPlanRequest, queue_size=1)
-        self.height_map = None # TODO check for is None
+        self.height_map = None  # TODO check for is None
         self.joint_states_ik_seed = self.generate_joint_states_ik_seed()
 
         print 'Initialization complete'
@@ -110,7 +111,7 @@ class GraspDataCollection:
         try:
             req = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState)
             res = req(self.object_name, '')
-            print res.error_code
+            print res.success
             height = res.pose.position.z
             if self.verbose:
                 print 'Height: ', height
@@ -197,7 +198,7 @@ class GraspDataCollection:
         sig_pos = 0.0001  # [m] std dev for position
         x = np.random.normal(self.object_position[0], sig_pos)
         y = np.random.normal(self.object_position[1], sig_pos)
-        th = 0 # np.random.uniform(0.0, math.pi * 2.0)
+        th = 0  # np.random.uniform(0.0, math.pi * 2.0)
         # https://www.programcreek.com/python/example/70252/geometry_msgs.msg.PoseStamped
         ps = PoseStamped()
         ps.header.frame_id = "/" + self.reference_frame
@@ -209,7 +210,8 @@ class GraspDataCollection:
             ps.pose.position.z = self.post_grasp_height
         else:
             ps.pose.position.z = self.lift_height
-        q = tf.transformations.quaternion_from_euler(math.pi, 0, th, axes='sxyz')
+        q = tf.transformations.quaternion_from_euler(
+            math.pi, 0, th, axes='sxyz')
         ps.pose.orientation.x = q[0]
         ps.pose.orientation.y = q[1]
         ps.pose.orientation.z = q[2]
@@ -229,9 +231,17 @@ class GraspDataCollection:
                 jc.tolerance_above = self.joint_angle_tolerance
                 jc.tolerance_below = self.joint_angle_tolerance
                 con.joint_constraints.append(jc)
-        mpr.goal_constraints = con
+        mpr.goal_constraints.joint_constraints = con
         mpr.group_name = self.planning_group_name
         mpr.allowed_planning_time = 3.0  # [s]
+        try:
+            req = rospy.ServiceProxy(
+                '/plan_kinematic_path', GetMotionPlan)
+            res = req(mpr)
+            traj = res.trajectory
+            print traj
+        except rospy.ServiceException, e:
+            print "Service call failed: %s" % e
         self.mpr_pub.publish(mpr)
 
     def execute_grasp_action(self, action):
@@ -263,7 +273,9 @@ def main(args):
         height_map = gdc.height_map
         ik_pre = gdc.get_ik('pre')
         gdc.move_to_state(ik_pre)
+        rospy.sleep(5)
         gdc.move_to_state(gdc.get_ik('grasp'))
+        rospy.sleep(5)
         gdc.execute_grasp_action('close')
         gdc.move_to_state(gdc.get_ik('lift'))
         # wait til it gets there, TODO put elsewhere as appropriate
