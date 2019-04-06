@@ -7,7 +7,7 @@ import rospy
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
 import numpy as np
-from geometry_msgs.msg import Pose, Point, PoseStamped
+from geometry_msgs.msg import Pose, Point, PoseStamped, Vector3
 from grid_map_msgs.msg import GridMap
 from gazebo_msgs.msg import ModelState
 from gazebo_msgs.srv import SetModelState
@@ -42,7 +42,7 @@ class GraspDataCollection:
         self.pre_grasp_height = 0.85
         self.post_grasp_height = 0.77
         self.lift_height = 1.0
-        self.joint_angle_tolerance = 0.0001
+        self.joint_angle_tolerance = 0.001 # 0.0001?
         self.reference_frame = 'world'
         self.model_name = 'jaco_on_table'
         self.palm_link = 'jaco_fingers_base_link'
@@ -52,8 +52,7 @@ class GraspDataCollection:
         self.joint_names = self.load_joint_properties()
         # dictionary {joint_name: value}
         self.joint_states = self.get_joint_states()
-        print self.joint_states
-        self.object_height = 0.0
+        self.object_height = 0.0 # [m]
         self.object_position = [0.4, 0.0, 0.76]
         self.phase = 'pre'
         self.finger_joint_angles_grasp = 0.53
@@ -224,6 +223,7 @@ class GraspDataCollection:
         return ps
 
     def move_to_state(self, joint_states):
+        print joint_states
         if self.verbose:
             print 'Moving to next state'
         mpr = MotionPlanRequest()
@@ -237,6 +237,8 @@ class GraspDataCollection:
                 jc.tolerance_below = self.joint_angle_tolerance
                 jc.weight = 1.0
                 con.joint_constraints.append(jc)
+        mpr.workspace_parameters.min_corner = Vector3(-10, -10, -10)
+        mpr.workspace_parameters.max_corner = Vector3(10, 10, 10)
         mpr.goal_constraints = [con]
         mpr.group_name = self.planning_group_name
         mpr.allowed_planning_time = 3.0  # [s]
@@ -252,11 +254,13 @@ class GraspDataCollection:
             self.joint_traj_action_topic, FollowJointTrajectoryAction)
         client.wait_for_server()
 
+        # http://docs.ros.org/diamondback/api/control_msgs/html/index-msg.html
         goal = FollowJointTrajectoryGoal()
         goal.trajectory = traj.joint_trajectory
-        # print goal
         client.send_goal(goal)
-        # client.wait_for_result(rospy.Duration.from_sec(5.0))
+        client.wait_for_result(rospy.Duration.from_sec(5.0))
+        # http://docs.ros.org/api/actionlib/html/classactionlib_1_1simple__action__client_1_1SimpleActionClient.html
+        print client.get_state()
 
     def execute_grasp_action(self, action):
         if self.verbose:
@@ -284,16 +288,16 @@ def main(args):
     gdc.save_arm_home_state()
     while gdc.current_trial_no < gdc.total_num_trials:
         gdc.position_object()
-        height_map = gdc.height_map
+        height_map = gdc.height_map # TODO make not None
         ik_pre = gdc.get_ik('pre')
         gdc.move_to_state(ik_pre)
-        # rospy.sleep(50)
+        rospy.sleep(50)
         gdc.move_to_state(gdc.get_ik('grasp'))
-        rospy.sleep(5)
+        # rospy.sleep(5)
         gdc.execute_grasp_action('close')
         gdc.move_to_state(gdc.get_ik('lift'))
         # wait til it gets there, TODO put elsewhere as appropriate
-        rospy.sleep(3)
+        # rospy.sleep(3)
         height = gdc.get_object_height()
         gdc.execute_grasp_action('open')
         gdc.save(height_map, ik_pre, height)
