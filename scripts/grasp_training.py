@@ -19,14 +19,16 @@ from moveit_msgs.msg import PositionIKRequest
 from moveit_msgs.msg import RobotState
 from moveit_msgs.srv import GetPositionFK
 from moveit_msgs.srv import GetMotionPlan
-from moveit_msgs.msg import MotionPlanRequest, Constraints, JointConstraint
-# from sensor_msgs.msg import JointState
+from moveit_msgs.msg import MotionPlanRequest, Constraints, JointConstraint, RobotTrajectory
+from control_msgs.msg import FollowJointTrajectoryAction, FollowJointTrajectoryGoal
+from sensor_msgs.msg import JointState
 import math
 import pickle
 import os
 import tf
 import yaml
 from tempfile import TemporaryFile
+import actionlib
 
 
 class GraspDataCollection:
@@ -45,6 +47,7 @@ class GraspDataCollection:
         self.model_name = 'jaco_on_table'
         self.palm_link = 'jaco_fingers_base_link'
         self.joint_to_exclude = 'base_to_jaco_on_table'
+        self.joint_traj_action_topic = '/jaco/joint_trajectory_action'
         # reads in the joint names as a list
         self.joint_names = self.load_joint_properties()
         # dictionary {joint_name: value}
@@ -62,6 +65,10 @@ class GraspDataCollection:
                                        Image, self.hm_clbk,  queue_size=1)
         self.mpr_pub = rospy.Publisher(
             "/move_group/motion_plan_request", MotionPlanRequest, queue_size=1)
+        # self.move_pub = rospy.Publisher(
+        # "/jaco/joint_control", JointState, queue_size=1)
+        # self.traj_pub = rospy.Publisher(
+        #     "/execute_trajectory/goal", ExecuteTrajectory, queue_size=1)
         self.height_map = None  # TODO check for is None
         self.joint_states_ik_seed = self.generate_joint_states_ik_seed()
 
@@ -159,9 +166,8 @@ class GraspDataCollection:
             ik.pose_stamped = self.generate_grasp_pose()
             # ik.timeout.secs = 0.0  # [s]
             # ik.attempts = 100
-            print '\nIK message:', ik
+            # print '\nIK message:', ik
             res = req(ik)
-            print res.error_code
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
 
@@ -173,7 +179,6 @@ class GraspDataCollection:
             req = rospy.ServiceProxy(
                 '/gazebo/get_model_properties', GetModelProperties)
             res = req(self.model_name)
-            print res.success
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
         return res.joint_names
@@ -227,22 +232,31 @@ class GraspDataCollection:
             if name != self.joint_to_exclude:
                 jc = JointConstraint()
                 jc.joint_name = name
-                jc.position = val
+                jc.position = val[0]
                 jc.tolerance_above = self.joint_angle_tolerance
                 jc.tolerance_below = self.joint_angle_tolerance
+                jc.weight = 1.0
                 con.joint_constraints.append(jc)
-        mpr.goal_constraints.joint_constraints = con
+        mpr.goal_constraints = [con]
         mpr.group_name = self.planning_group_name
         mpr.allowed_planning_time = 3.0  # [s]
         try:
             req = rospy.ServiceProxy(
                 '/plan_kinematic_path', GetMotionPlan)
             res = req(mpr)
-            traj = res.trajectory
-            print traj
+            traj = res.motion_plan_response.trajectory
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
-        self.mpr_pub.publish(mpr)
+
+        client = actionlib.SimpleActionClient(
+            self.joint_traj_action_topic, FollowJointTrajectoryAction)
+        client.wait_for_server()
+
+        goal = FollowJointTrajectoryGoal()
+        goal.trajectory = traj.joint_trajectory
+        # print goal
+        client.send_goal(goal)
+        # client.wait_for_result(rospy.Duration.from_sec(5.0))
 
     def execute_grasp_action(self, action):
         if self.verbose:
@@ -254,7 +268,7 @@ class GraspDataCollection:
         joint_states = self.get_joint_states()
         for finger_joint_name in self.finger_joint_names:
             joint_states[finger_joint_name] = angle
-        self.move_to_state
+        # self.move_to_state
 
     def save(self, height_map, ik_pre, height):
         if self.verbose:
@@ -273,7 +287,7 @@ def main(args):
         height_map = gdc.height_map
         ik_pre = gdc.get_ik('pre')
         gdc.move_to_state(ik_pre)
-        rospy.sleep(5)
+        # rospy.sleep(50)
         gdc.move_to_state(gdc.get_ik('grasp'))
         rospy.sleep(5)
         gdc.execute_grasp_action('close')
