@@ -10,11 +10,15 @@ import numpy as np
 from geometry_msgs.msg import Pose, Point, PoseStamped
 from grid_map_msgs.msg import GridMap
 from gazebo_msgs.msg import ModelState
+from gazebo_msgs.srv import SetModelState
 from gazebo_msgs.srv import GetModelState
 from gazebo_msgs.srv import GetModelProperties
 from gazebo_msgs.srv import GetJointProperties
 from moveit_msgs.srv import GetPositionIK
+from moveit_msgs.msg import PositionIKRequest
+from moveit_msgs.msg import RobotState
 from moveit_msgs.srv import GetPositionFK
+from moveit_msgs.msg import MotionPlanRequest, Constraints, JointConstraint
 # from sensor_msgs.msg import JointState
 import math
 import pickle
@@ -29,14 +33,19 @@ class GraspDataCollection:
         self.total_num_trials = 100
         self.current_trial_no = 0
         self.object_name = 'cube1'
+        self.planning_group_name = 'Arm'
         self.pre_grasp_height = 0.85
         self.post_grasp_height = 0.77
         self.lift_height = 1.0
+        self.joint_angle_tolerance = 0.0001
         self.reference_frame = 'robot_base'
         self.model_name = 'jaco_on_table'
         self.palm_link = 'jaco_fingers_base_link'
-        self.joint_names = self.load_joint_properties() # reads in the joint names as a list
-        self.joint_states = self.get_joint_states() # dictionary {joint_name: value}
+        self.joint_to_exclude = 'base_to_jaco_on_table'
+        # reads in the joint names as a list
+        self.joint_names = self.load_joint_properties()
+        # dictionary {joint_name: value}
+        self.joint_states = self.get_joint_states()
         self.object_height = 0.0
         self.object_position = [0.2, 0.0, 0.76]
         self.phase = 'pre'
@@ -47,6 +56,7 @@ class GraspDataCollection:
         self.arm_home_state = {}
         self.hm_sub = rospy.Subscriber("/height_map_image",
                                        Image, self.hm_clbk,  queue_size=1)
+        self.mpr_pub = rospy.Publisher("/move_group/motion_plan_request", MotionPlanRequest, queue_size=1)
         self.height_map = None
 
     def hm_clbk(self, msg):
@@ -71,7 +81,7 @@ class GraspDataCollection:
         rospy.wait_for_service('/gazebo/get_model_state')
         try:
             req = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState)
-            res = req(self.object_name)
+            res = req(self.object_name)[0]
             height = res.pose.position.z
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
@@ -79,13 +89,13 @@ class GraspDataCollection:
     def position_object(self):
         rospy.wait_for_service('/gazebo/set_model_state')
         try:
-            req = rospy.ServiceProxy('/gazebo/set_model_state', ModelState)
+            req = rospy.ServiceProxy('/gazebo/set_model_state', SetModelState)
             ms = ModelState()
-            ms.model_state.model_name = self.object_name
-            ms.model_state.pose.position.x = self.object_position[0]
-            ms.model_state.pose.position.y = self.object_position[1]
-            ms.model_state.pose.position.z = self.object_position[2]
-            ms.model_state.reference_frame = self.reference_frame
+            ms.model_name = self.object_name
+            ms.pose.position.x = self.object_position[0]
+            ms.pose.position.y = self.object_position[1]
+            ms.pose.position.z = self.object_position[2]
+            ms.reference_frame = self.reference_frame
             res = req(ms)
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
@@ -95,17 +105,20 @@ class GraspDataCollection:
         rospy.wait_for_service('/compute_ik')
         try:
             req = rospy.ServiceProxy('/compute_ik', GetPositionIK)
-            ik = GetPositionIK()
-            ik.group_name = 'Arm'
-            ik.robot_state.frame_id = self.reference_frame
+            ik = PositionIKRequest()
+            rs = RobotState()
+            ik.group_name = self.planning_group_name
+            rs.joint_state.header.frame_id = self.reference_frame
             names = []
             vals = []
-            for name, val in zip(self.joint_names, self.joint_states):
-                names.append(name)
-                vals.append(val)
-            ik.robot_state.name = names
-            ik.robot_state.position = vals
+            for name, val in self.joint_states.items():
+                if name != self.joint_to_exclude:
+                    names.append(name)
+                    vals.append(val[0])
+            rs.joint_state.name = names
+            rs.joint_state.position = vals
             ik.ik_link_name = self.palm_link
+            ik.robot_state = rs
             ik.pose_stamped = self.generate_grasp_pose()
             res = req(ik)
         except rospy.ServiceException, e:
@@ -121,16 +134,20 @@ class GraspDataCollection:
             print "Service call failed: %s" % e
         return res.joint_names
 
-    def get_joint_states(self):
+    def get_single_joint_state(self, joint_name):
         rospy.wait_for_service('/gazebo/get_joint_properties')
-        joint_states = {}
         try:
             req = rospy.ServiceProxy(
                 '/gazebo/get_joint_properties', GetJointProperties)
-            for joint in self.joint_names:
-                joint_states[joint] = req(joint)
+            state = req(joint_name).position
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
+        return state
+
+    def get_joint_states(self):
+        joint_states = {}
+        for j in self.joint_names:
+            joint_states[j] = self.get_single_joint_state(j)
         return joint_states
 
     def generate_grasp_pose(self):
@@ -156,16 +173,21 @@ class GraspDataCollection:
         ps.pose.orientation.w = q[3]
         return ps
 
-    # TODO link up to move it motopino plan request
     def move_to_state(self, joint_states):
-        rospy.wait_for_service('/gazebo/get_joint_properties')
-        try:
-            req = rospy.ServiceProxy(
-                '/gazebo/get_joint_properties', JointProperties)
-            for joint in self.joint_names:
-                self.joint_states[joint] = req(joint)
-        except rospy.ServiceException, e:
-            print "Service call failed: %s" % e
+        mpr = MotionPlanRequest()
+        con = Constraints()
+        for name, val in self.joint_states.items():
+            if name != self.joint_to_exclude:
+                jc = JointConstraint()
+                jc.joint_name = name
+                jc.position = val
+                jc.tolerance_above = self.joint_angle_tolerance
+                jc.tolerance_below = self.joint_angle_tolerance
+                con.joint_constraints.append(jc)
+        mpr.goal_constraints = con
+        mpr.group_name = self.planning_group_name
+        mpr.allowed_planning_time = 3.0 # [s]
+        self.mpr_pub.publish(mpr)
 
     def execute_grasp_action(self, action):
         if action == 'close':
@@ -180,7 +202,8 @@ class GraspDataCollection:
     def save(self, height_map, ik_pre, height):
         # https://docs.scipy.org/doc/numpy/reference/generated/numpy.savez.html
         outfile = TemporaryFile()
-        np.savez(outfile, height_map = height_map, height = height)
+        np.savez(outfile, height_map=height_map, height=height)
+
 
 def main(args):
     rospy.init_node('grasp_data_collection')
@@ -194,7 +217,8 @@ def main(args):
         gdc.move_to_state(gdc.get_ik('grasp'))
         gdc.execute_grasp_action('close')
         gdc.move_to_state(gdc.get_ik('lift'))
-        rospy.sleep(3) # wait til it gets there, TODO put elsewhere as appropriate
+        # wait til it gets there, TODO put elsewhere as appropriate
+        rospy.sleep(3)
         height = gdc.get_object_height()
         gdc.execute_grasp_action('open')
         gdc.save(height_map, ik_pre, height)
@@ -204,6 +228,7 @@ def main(args):
         rospy.spin()
         if rospy.is_shutdown():
             break
+
 
 if __name__ == '__main__':
     main(sys.argv)
