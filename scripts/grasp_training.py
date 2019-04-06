@@ -40,7 +40,7 @@ class GraspDataCollection:
         self.post_grasp_height = 0.77
         self.lift_height = 1.0
         self.joint_angle_tolerance = 0.0001
-        self.reference_frame = 'robot_base'
+        self.reference_frame = 'world'
         self.model_name = 'jaco_on_table'
         self.palm_link = 'jaco_fingers_base_link'
         self.joint_to_exclude = 'base_to_jaco_on_table'
@@ -50,7 +50,7 @@ class GraspDataCollection:
         self.joint_states = self.get_joint_states()
         print self.joint_states
         self.object_height = 0.0
-        self.object_position = [0.2, 0.0, 0.76]
+        self.object_position = [0.4, 0.0, 0.76]
         self.phase = 'pre'
         self.finger_joint_angles_grasp = 0.53
         self.finger_joint_angles_ungrasp = 0.05
@@ -61,7 +61,7 @@ class GraspDataCollection:
                                        Image, self.hm_clbk,  queue_size=1)
         self.mpr_pub = rospy.Publisher(
             "/move_group/motion_plan_request", MotionPlanRequest, queue_size=1)
-        self.height_map = None
+        self.height_map = None # TODO check for is None
         self.joint_states_ik_seed = self.generate_joint_states_ik_seed()
 
         print 'Initialization complete'
@@ -77,7 +77,7 @@ class GraspDataCollection:
                 'jaco_finger_joint_4': -5.652861570215606e-05,
                 'jaco_arm_1_joint': -2.298114280915076,
                 'jaco_arm_2_joint': -2.8895313400862497}
-            return vals
+        return vals
 
     def hm_clbk(self, msg):
         try:
@@ -143,20 +143,21 @@ class GraspDataCollection:
             ik = PositionIKRequest()
             rs = RobotState()
             ik.group_name = self.planning_group_name
-            rs.joint_state.header.frame_id = self.reference_frame
+            rs.joint_state.header.frame_id = "/" + self.reference_frame
             names = []
             vals = []
-            for name, val in self.joint_states.items():
+            for name, val in self.joint_states_ik_seed.items():
                 if name != self.joint_to_exclude:
                     names.append(name)
-                    vals.append(val[0])
+                    vals.append(val)
+                    # vals.append(val[0])
             rs.joint_state.name = names
             rs.joint_state.position = vals
             ik.ik_link_name = self.palm_link
             ik.robot_state = rs
             ik.pose_stamped = self.generate_grasp_pose()
-            ik.timeout.secs = 10.0  # [s]
-            ik.attempts = 100
+            # ik.timeout.secs = 0.0  # [s]
+            # ik.attempts = 100
             print '\nIK message:', ik
             res = req(ik)
             print res.error_code
@@ -193,13 +194,13 @@ class GraspDataCollection:
     def generate_grasp_pose(self):
         if self.verbose:
             print 'Generating grasp pose'
-        sig_pos = 0.2  # [m] std dev for position
+        sig_pos = 0.0001  # [m] std dev for position
         x = np.random.normal(self.object_position[0], sig_pos)
         y = np.random.normal(self.object_position[1], sig_pos)
-        th = np.random.uniform(0.0, math.pi * 2.0)
+        th = 0 # np.random.uniform(0.0, math.pi * 2.0)
         # https://www.programcreek.com/python/example/70252/geometry_msgs.msg.PoseStamped
         ps = PoseStamped()
-        ps.header.frame_id = self.reference_frame
+        ps.header.frame_id = "/" + self.reference_frame
         ps.pose.position.x = x
         ps.pose.position.y = y
         if self.phase == 'pre':
@@ -208,7 +209,7 @@ class GraspDataCollection:
             ps.pose.position.z = self.post_grasp_height
         else:
             ps.pose.position.z = self.lift_height
-        q = tf.transformations.quaternion_from_euler(0, 0, th)
+        q = tf.transformations.quaternion_from_euler(math.pi, 0, th, axes='sxyz')
         ps.pose.orientation.x = q[0]
         ps.pose.orientation.y = q[1]
         ps.pose.orientation.z = q[2]
