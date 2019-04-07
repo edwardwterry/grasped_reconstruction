@@ -22,6 +22,7 @@ from moveit_msgs.srv import GetMotionPlan
 from moveit_msgs.msg import MotionPlanRequest, Constraints, JointConstraint, RobotTrajectory
 from control_msgs.msg import FollowJointTrajectoryAction, FollowJointTrajectoryGoal
 from sensor_msgs.msg import JointState
+from grasp_execution_msgs.msg import GraspControl
 import math
 import pickle
 import os
@@ -41,19 +42,20 @@ class GraspDataCollection:
         self.planning_group_name = 'Arm'
         self.pre_grasp_height = 1.0
         self.post_grasp_height = 1.0 # 0.77
-        self.lift_height = 1.0
-        self.joint_angle_tolerance = 0.1 # 0.0001?
+        self.lift_height = 1.3
+        self.joint_angle_tolerance = 0.001
         self.reference_frame = 'world'
         self.model_name = 'jaco_on_table'
         self.palm_link = 'jaco_fingers_base_link'
         self.joint_to_exclude = 'base_to_jaco_on_table'
         self.joint_traj_action_topic = '/jaco/joint_trajectory_action'
+        self.grasp_action_topic = '/jaco/grasp_action'
         # reads in the joint names as a list
         self.joint_names = self.load_joint_properties()
         # dictionary {joint_name: value}
         self.joint_states = self.get_joint_states()
         self.object_height = 0.0 # [m]
-        self.object_position = [0.4, 0.0, 0.76]
+        self.object_position = [0.2, 0.0, 0.76]
         self.phase = 'pre'
         self.finger_joint_angles_grasp = 0.53
         self.finger_joint_angles_ungrasp = 0.05
@@ -62,12 +64,6 @@ class GraspDataCollection:
         self.arm_home_state = {}
         self.hm_sub = rospy.Subscriber("/height_map_image",
                                        Image, self.hm_clbk,  queue_size=1)
-        self.mpr_pub = rospy.Publisher(
-            "/move_group/motion_plan_request", MotionPlanRequest, queue_size=1)
-        # self.move_pub = rospy.Publisher(
-        # "/jaco/joint_control", JointState, queue_size=1)
-        # self.traj_pub = rospy.Publisher(
-        #     "/execute_trajectory/goal", ExecuteTrajectory, queue_size=1)
         self.height_map = None  # TODO check for is None
         self.joint_states_ik_seed = self.generate_joint_states_ik_seed()
 
@@ -143,7 +139,7 @@ class GraspDataCollection:
     def get_ik(self, phase):
         self.phase = phase
         if self.verbose:
-            print 'Computing IK'
+            print 'Computing IK for', phase
         rospy.wait_for_service('/compute_ik')
         try:
             req = rospy.ServiceProxy('/compute_ik', GetPositionIK)
@@ -165,12 +161,14 @@ class GraspDataCollection:
             ik.pose_stamped = self.generate_grasp_pose()
             ik.timeout.secs = 3.0  # [s]
             ik.attempts = 100
-            print '\nIK message:', ik
+            # print '\nIK message:', ik
             res = req(ik)
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
-        # print res
-        return res.solution.joint_state
+        js = {}
+        for name, val in zip(res.solution.joint_state.name, res.solution.joint_state.position):
+            js[name] = val
+        return js
 
     def load_joint_properties(self):
         if self.verbose:
@@ -191,7 +189,7 @@ class GraspDataCollection:
             req = rospy.ServiceProxy(
                 '/gazebo/get_joint_properties', GetJointProperties)
             for j in self.joint_names:
-                state = req(j).position
+                state = req(j).position[0]
                 joint_states[j] = state
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
@@ -225,13 +223,11 @@ class GraspDataCollection:
         return ps
 
     def move_to_state(self, joint_states):
-        print self.joint_states
-        print joint_states
         if self.verbose:
             print 'Moving to next state'
         mpr = MotionPlanRequest()
         con = Constraints()
-        for name, val in zip(joint_states.name, joint_states.position):
+        for name, val in joint_states.items():
             if name != self.joint_to_exclude:
                 jc = JointConstraint()
                 jc.joint_name = name
@@ -240,7 +236,6 @@ class GraspDataCollection:
                 jc.tolerance_below = self.joint_angle_tolerance
                 jc.weight = 1.0
                 con.joint_constraints.append(jc)
-        print con
         mpr.goal_constraints = [con]
         mpr.group_name = self.planning_group_name
         mpr.allowed_planning_time = 3.0  # [s]
@@ -259,11 +254,10 @@ class GraspDataCollection:
         # http://docs.ros.org/diamondback/api/control_msgs/html/index-msg.html
         goal = FollowJointTrajectoryGoal()
         goal.trajectory = traj.joint_trajectory
-        print traj.joint_trajectory
         client.send_goal(goal)
-        client.wait_for_result(rospy.Duration.from_sec(5.0))
+        client.wait_for_result(rospy.Duration.from_sec(15.0))
         # http://docs.ros.org/api/actionlib/html/classactionlib_1_1simple__action__client_1_1SimpleActionClient.html
-        print client.get_state()
+        # print client.get_state()
 
     def execute_grasp_action(self, action):
         if self.verbose:
@@ -271,18 +265,39 @@ class GraspDataCollection:
         if action == 'close':
             angle = self.finger_joint_angles_grasp
         elif action == 'open':
-            angle = self.finger_joint_angles_grasp
+            angle = self.finger_joint_angles_ungrasp
         joint_states = self.get_joint_states()
         for finger_joint_name in self.finger_joint_names:
             joint_states[finger_joint_name] = angle
-        # self.move_to_state
+
+        client = actionlib.SimpleActionClient(
+            self.grasp_action_topic, GraspControl)
+        client.wait_for_server()
+
+        # http://docs.ros.org/diamondback/api/control_msgs/html/index-msg.html
+        goal = GraspControl()
+        names = []
+        vals = []
+        for name, val in joint_states:
+            names.append(name)
+            vals.append(vals)
+        js = JointState()
+        js.name = names
+        js.position = vals
+        goal.target_joint_state = js
+        if action == 'close':
+            goal.closing = True
+        elif action == 'open':
+            goal.closing = False
+        client.send_goal(goal)
+        client.wait_for_result(rospy.Duration.from_sec(15.0))        
 
     def save(self, height_map, ik_pre, height):
         if self.verbose:
             print 'Saving data'
         # https://docs.scipy.org/doc/numpy/reference/generated/numpy.savez.html
-        outfile = TemporaryFile()
-        np.savez(outfile, height_map=height_map, height=height)
+        # outfile = TemporaryFile()
+        np.savez('output', height_map=height_map, height=height)
 
 
 def main(args):
@@ -294,13 +309,9 @@ def main(args):
         height_map = gdc.height_map # TODO make not None
         ik_pre = gdc.get_ik('pre')
         gdc.move_to_state(ik_pre)
-        rospy.sleep(50)
         gdc.move_to_state(gdc.get_ik('grasp'))
-        # rospy.sleep(5)
         gdc.execute_grasp_action('close')
         gdc.move_to_state(gdc.get_ik('lift'))
-        # wait til it gets there, TODO put elsewhere as appropriate
-        # rospy.sleep(3)
         height = gdc.get_object_height()
         gdc.execute_grasp_action('open')
         gdc.save(height_map, ik_pre, height)
