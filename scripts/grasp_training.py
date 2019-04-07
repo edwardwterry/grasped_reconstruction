@@ -22,7 +22,7 @@ from moveit_msgs.srv import GetMotionPlan
 from moveit_msgs.msg import MotionPlanRequest, Constraints, JointConstraint, RobotTrajectory
 from control_msgs.msg import FollowJointTrajectoryAction, FollowJointTrajectoryGoal
 from sensor_msgs.msg import JointState
-from grasp_execution_msgs.msg import GraspControl
+from grasp_execution_msgs.msg import GraspControlAction, GraspControlGoal
 import math
 import pickle
 import os
@@ -40,10 +40,10 @@ class GraspDataCollection:
         self.current_trial_no = 0
         self.object_name = 'cube1'
         self.planning_group_name = 'Arm'
-        self.pre_grasp_height = 1.0
+        self.pre_grasp_height = 1.1
         self.post_grasp_height = 1.0 # 0.77
         self.lift_height = 1.3
-        self.joint_angle_tolerance = 0.001
+        self.joint_angle_tolerance = 0.1
         self.reference_frame = 'world'
         self.model_name = 'jaco_on_table'
         self.palm_link = 'jaco_fingers_base_link'
@@ -55,7 +55,7 @@ class GraspDataCollection:
         # dictionary {joint_name: value}
         self.joint_states = self.get_joint_states()
         self.object_height = 0.0 # [m]
-        self.object_position = [0.2, 0.0, 0.76]
+        self.object_position = [0.4, 0.0, 0.76]
         self.phase = 'pre'
         self.finger_joint_angles_grasp = 0.53
         self.finger_joint_angles_ungrasp = 0.05
@@ -271,11 +271,11 @@ class GraspDataCollection:
             joint_states[finger_joint_name] = angle
 
         client = actionlib.SimpleActionClient(
-            self.grasp_action_topic, GraspControl)
+            self.grasp_action_topic, GraspControlAction)
         client.wait_for_server()
 
         # http://docs.ros.org/diamondback/api/control_msgs/html/index-msg.html
-        goal = GraspControl()
+        goal = GraspControlGoal()
         names = []
         vals = []
         for name, val in joint_states:
@@ -290,6 +290,7 @@ class GraspDataCollection:
         elif action == 'open':
             goal.closing = False
         client.send_goal(goal)
+        
         client.wait_for_result(rospy.Duration.from_sec(15.0))        
 
     def save(self, height_map, ik_pre, height):
