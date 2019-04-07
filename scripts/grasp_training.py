@@ -28,6 +28,7 @@ from grasp_execution_msgs.msg import GraspControlAction, GraspControlGoal
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from moveit_msgs.msg import GripperTranslation
 from moveit_msgs.msg import PickupAction, PickupActionGoal, PickupGoal
+from actionlib_msgs.msg import GoalID
 import math
 import pickle
 import os
@@ -42,7 +43,7 @@ class GraspDataCollection:
     def __init__(self, verbosity):
         self.verbose = verbosity
         self.bridge = CvBridge()
-        self.total_num_trials = 100
+        self.total_num_trials = 1
         self.current_trial_no = 0
         self.object_name = 'cube1'
         self.planning_group_name = 'Arm'
@@ -53,6 +54,7 @@ class GraspDataCollection:
         self.reference_frame = 'world'
         self.model_name = 'jaco_on_table'
         self.palm_link = 'jaco_fingers_base_link'
+        self.eef_link = 'jaco_6_hand_limb'
         self.joint_to_exclude = 'base_to_jaco_on_table'
         self.joint_traj_action_topic = '/jaco/joint_trajectory_action'
         self.grasp_action_topic_jen = '/jaco/grasp_action'
@@ -306,7 +308,7 @@ class GraspDataCollection:
             pgpost.joint_names.append(name)
             jtp = JointTrajectoryPoint()
             jtp.positions.append(val)
-            jtp.time_from_start = 0.5 # [s]
+            jtp.time_from_start.secs = 1 # [s]
             pgpost.points.append(jtp)
 
         gpost = JointTrajectory()
@@ -314,19 +316,19 @@ class GraspDataCollection:
             gpost.joint_names.append(name)
             jtp = JointTrajectoryPoint()
             jtp.positions.append(val)
-            jtp.time_from_start = 0.5 # [s]
+            jtp.time_from_start.secs = 1 # [s]
             gpost.points.append(jtp)
 
-        print pgpost, gpost
 
         if action == 'open': # reverse the prior order
             pgpost, gpost = gpost, pgpost # TODO verify that these have been properly switched!
+        print pgpost, gpost
 
         grasp = Grasp()
 
         gp = PoseStamped()
         gp = self.get_eef_pose()
-        print gp
+        # print gp
 
         pregrapp = GripperTranslation() # check wrt which axis
         postgrretr = GripperTranslation()
@@ -343,11 +345,16 @@ class GraspDataCollection:
         grasp.allowed_touch_objects = [self.object_name]        
 
         goal = PickupGoal()
-        # goal.target_name = self.object_name
-        # goal.group_name = self.planning_group_name
-        # goal.end_effector = self.palm_link
-        # goal.possible_grasps = [grasp]
-        # goal.allowed_planning_time = 3.0 # [s]
+        goal.target_name = self.object_name
+        goal.group_name = self.planning_group_name
+        goal.end_effector = self.eef_link
+        goal.possible_grasps = [grasp]
+        goal.allowed_planning_time = 3.0 # [s]
+
+        pag = PickupActionGoal()
+        pag.header = Header()
+        pag.goal_id = GoalID()
+        pag.goal = goal
 
         client = actionlib.SimpleActionClient(
             self.grasp_action_topic, PickupAction)
@@ -355,7 +362,7 @@ class GraspDataCollection:
         if self.verbose:
             print 'Executing grasp action:', action        
 
-        client.send_goal(goal)
+        client.send_goal(pag)
 
     def save(self, height_map, ik_pre, height):
         if self.verbose:
