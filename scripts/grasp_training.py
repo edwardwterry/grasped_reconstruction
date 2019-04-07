@@ -27,7 +27,7 @@ from std_msgs.msg import Header
 from grasp_execution_msgs.msg import GraspControlAction, GraspControlGoal
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from moveit_msgs.msg import GripperTranslation
-from moveit_msgs.msg import PickupAction, PickupActionGoal
+from moveit_msgs.msg import PickupAction, PickupActionGoal, PickupGoal
 import math
 import pickle
 import os
@@ -56,7 +56,7 @@ class GraspDataCollection:
         self.joint_to_exclude = 'base_to_jaco_on_table'
         self.joint_traj_action_topic = '/jaco/joint_trajectory_action'
         self.grasp_action_topic_jen = '/jaco/grasp_action'
-        self.grasp_action_topic = '/pickup/goal' # TODO goal or no goal?
+        self.grasp_action_topic = '/pickup' # TODO goal or no goal?
         # reads in the joint names as a list
         self.joint_names = self.load_joint_properties()
         # dictionary {joint_name: value}
@@ -288,7 +288,7 @@ class GraspDataCollection:
         client.wait_for_result(rospy.Duration.from_sec(15.0))
         # http://docs.ros.org/api/actionlib/html/classactionlib_1_1simple__action__client_1_1SimpleActionClient.html
         # print client.get_state()
-        
+
     def execute_grasp_action(self, action):
         js_closed = {}
         js_open = {}
@@ -302,7 +302,7 @@ class GraspDataCollection:
             js_open[finger_joint_name] = angle_open
 
         pgpost = JointTrajectory()
-        for name, val in js_closed:
+        for name, val in js_closed.items():
             pgpost.joint_names.append(name)
             jtp = JointTrajectoryPoint()
             jtp.positions.append(val)
@@ -310,20 +310,23 @@ class GraspDataCollection:
             pgpost.points.append(jtp)
 
         gpost = JointTrajectory()
-        for name, val in js_open:
+        for name, val in js_open.items():
             gpost.joint_names.append(name)
             jtp = JointTrajectoryPoint()
             jtp.positions.append(val)
             jtp.time_from_start = 0.5 # [s]
             gpost.points.append(jtp)
 
+        print pgpost, gpost
+
         if action == 'open': # reverse the prior order
-            pgpost, gpost = gpost, pgppost # TODO verify that these have been properly switched!
+            pgpost, gpost = gpost, pgpost # TODO verify that these have been properly switched!
 
         grasp = Grasp()
 
         gp = PoseStamped()
         gp = self.get_eef_pose()
+        print gp
 
         pregrapp = GripperTranslation() # check wrt which axis
         postgrretr = GripperTranslation()
@@ -339,75 +342,20 @@ class GraspDataCollection:
         grasp.max_contact_force = -1
         grasp.allowed_touch_objects = [self.object_name]        
 
-        goal = PickupActionGoal()
-        goal.target_name = self.object_name
-        goal.group_name = self.group_name
-        goal.end_effector = self.palm_link
-        goal.possible_grasps = [grasp]
-        goal.allowed_planning_time = 3.0 # [s]
+        goal = PickupGoal()
+        # goal.target_name = self.object_name
+        # goal.group_name = self.planning_group_name
+        # goal.end_effector = self.palm_link
+        # goal.possible_grasps = [grasp]
+        # goal.allowed_planning_time = 3.0 # [s]
 
         client = actionlib.SimpleActionClient(
             self.grasp_action_topic, PickupAction)
         client.wait_for_server()
+        if self.verbose:
+            print 'Executing grasp action:', action        
 
         client.send_goal(goal)
-
-#         grasp.id=grasp_id;
-# grasp.pre_grasp_posture=simpleGrasp(joint_names, grasp_open_angles); //sensor_msgs::JointState, hand posture for the pre-grasp
-# grasp.grasp_posture=simpleGrasp(joint_names, grasp_close_angles); //sensor_msgs::JointState, hand posture for the grasp
-
-# grasp.grasp_pose=aboveObj; //geometry_msgs::PoseStamped, effector pose for the grasp
-# // ROS_INFO_STREAM("Final grasp pose "<<grasp.grasp_pose.pose);
-
-# grasp.grasp_quality=0.5; //probability of success
-# //grasp.approach= //moveit_msgs::GripperTranslation
-# //grasp.retreat= //moveit_msgs::GripperTranslation
-# grasp.max_contact_force=-1; //disable maximum contact force
-
-        # client = actionlib.SimpleActionClient(
-        #     self.grasp_action_topic, PickupAction)
-        # client.wait_for_server()
-
-        # http://docs.ros.org/diamondback/api/control_msgs/html/index-msg.html
-        # goal = GraspControlGoal()
-        # names = []
-        # vals = []
-        # for name, val in joint_states:
-        #     names.append(name)
-        #     vals.append(vals)
-        # js = JointState()
-        # js.name = names
-        # js.position = vals
-        # goal.target_joint_state = js
-        # if action == 'close':
-        #     goal.closing = True
-        # elif action == 'open':
-        #     goal.closing = False
-        # client.send_goal(goal)
-
-        # client.wait_for_result(rospy.Duration.from_sec(15.0))     
-
-        # goal = GraspGoal()
-        # gd = GraspData()
-        # gd.grasp = grasp
-        # gd.end_effector_link_name = self.palm_link
-        # goal.grasp = gd
-
-        # if action == 'close':
-        #     goal.is_grasp = True       
-        # elif action == 'open':
-        #     goal.is_grasp = False     
-        # goal.ignore_effector_pose_ungrasp = True  
-
-        # goal.use_custom_tolerances = False
-        # goal.effector_pos_tolerance = 0.01 # [m]
-        # goal.effector_angle_tolerance = 0.01 # [rad]
-        # goal.joint_angles_tolerance = 0.01 # [rad]
-
-        # goal.curr_effector_pose = self.get_eef_pose()
-
-        
-
 
     def save(self, height_map, ik_pre, height):
         if self.verbose:
@@ -426,7 +374,7 @@ def main(args):
         height_map = gdc.height_map # TODO make not None
         ik_pre = gdc.get_ik('pre')
         gdc.move_to_state(ik_pre)
-        gdc.move_to_state(gdc.get_ik('grasp'))
+        # gdc.move_to_state(gdc.get_ik('grasp'))
         gdc.execute_grasp_action('close')
         gdc.move_to_state(gdc.get_ik('lift'))
         height = gdc.get_object_height()
