@@ -7,7 +7,7 @@ import rospy
 import cv2
 from cv_bridge import CvBridge, CvBridgeError
 import numpy as np
-from geometry_msgs.msg import Pose, Point, PoseStamped, Vector3
+from geometry_msgs.msg import Pose, Point, PoseStamped, Vector3, Vector3Stamped
 from grid_map_msgs.msg import GridMap
 from gazebo_msgs.msg import ModelState
 from gazebo_msgs.srv import SetModelState
@@ -54,7 +54,7 @@ class GraspDataCollection:
         self.reference_frame = 'world'
         self.model_name = 'jaco_on_table'
         self.palm_link = 'jaco_fingers_base_link'
-        self.eef_link = 'jaco_6_hand_limb'
+        self.eef_link = 'Wrist' #'jaco_6_hand_limb'
         self.joint_to_exclude = 'base_to_jaco_on_table'
         self.joint_traj_action_topic = '/jaco/joint_trajectory_action'
         self.grasp_action_topic_jen = '/jaco/grasp_action'
@@ -136,7 +136,7 @@ class GraspDataCollection:
             res = req(header, fk_link_names, rs)
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e        
-        return res.pose_stamped
+        return res.pose_stamped[0]
 
     def get_object_height(self):
         if self.verbose:
@@ -302,37 +302,67 @@ class GraspDataCollection:
             angle_open = self.finger_joint_angles_ungrasp
             js_closed[finger_joint_name] = angle_closed
             js_open[finger_joint_name] = angle_open
-
+        
         pgpost = JointTrajectory()
-        for name, val in js_closed.items():
-            pgpost.joint_names.append(name)
-            jtp = JointTrajectoryPoint()
-            jtp.positions.append(val)
-            jtp.time_from_start.secs = 1 # [s]
-            pgpost.points.append(jtp)
-
         gpost = JointTrajectory()
-        for name, val in js_open.items():
-            gpost.joint_names.append(name)
-            jtp = JointTrajectoryPoint()
-            jtp.positions.append(val)
-            jtp.time_from_start.secs = 1 # [s]
-            gpost.points.append(jtp)
+
+        jt_grasp = JointTrajectory()
+        for (name_cl, val_cl), (name_op, val_op) in zip(js_closed.items(), js_open.items()):
+            pgpost.joint_names.append(name_cl)
+            gpost.joint_names.append(name_cl)
+            jtp_c = JointTrajectoryPoint()
+            jtp_c.positions.append(val_op)
+            jtp_c.positions.append(val_cl)
+            jtp_c.time_from_start.secs = 1 # [s]
+            jtp_o = JointTrajectoryPoint()
+            jtp_o.positions.append(val_cl)
+            jtp_o.positions.append(val_op)
+            jtp_o.time_from_start.secs = 1 # [s]
+            pgpost.points.append(jtp_o)
+            pgpost.points.append(jtp_c)
+            gpost.points.append(jtp_o)
+            gpost.points.append(jtp_c)
+
+
+        # for name, val in js_closed.items():
+        #     jtp = JointTrajectoryPoint()
+        #     jtp.positions.append(val)
+        #     jtp.time_from_start.secs = 1 # [s]
+        #     pgpost.points.append(jtp)
+
+        # for name, val in js_open.items():
+        #     gpost.joint_names.append(name)
+        #     jtp = JointTrajectoryPoint()
+        #     jtp.positions.append(val)
+        #     jtp.time_from_start.secs = 1 # [s]
+        #     gpost.points.append(jtp)
 
 
         if action == 'open': # reverse the prior order
             pgpost, gpost = gpost, pgpost # TODO verify that these have been properly switched!
-        print pgpost, gpost
 
         grasp = Grasp()
 
         gp = PoseStamped()
         gp = self.get_eef_pose()
-        # print gp
 
         pregrapp = GripperTranslation() # check wrt which axis
         postgrretr = GripperTranslation()
-        postplretr = GripperTranslation()
+        # postplretr = GripperTranslation()
+
+        v3s = Vector3Stamped()
+        v3s.header.frame_id = "/" + self.reference_frame
+        v3s.vector.z = -1.0
+        pregrapp.direction = v3s
+        pregrapp.desired_distance = 0.2 # [m]
+        pregrapp.min_distance = 0.05 # [m]
+
+        v3s = Vector3Stamped()
+        v3s.header.frame_id = "/" + self.reference_frame
+        v3s.vector.z = 1.0
+        postgrretr.direction = v3s
+        postgrretr.desired_distance = 0.2 # [m]
+        postgrretr.min_distance = 0.05 # [m]        
 
         grasp.pre_grasp_posture = pgpost
         grasp.grasp_posture = gpost
@@ -340,7 +370,7 @@ class GraspDataCollection:
         grasp.grasp_quality = 0.5
         grasp.pre_grasp_approach = pregrapp
         grasp.post_grasp_retreat = postgrretr
-        grasp.post_place_retreat = postplretr
+        # grasp.post_place_retreat = postplretr
         grasp.max_contact_force = -1
         grasp.allowed_touch_objects = [self.object_name]        
 
@@ -351,18 +381,17 @@ class GraspDataCollection:
         goal.possible_grasps = [grasp]
         goal.allowed_planning_time = 3.0 # [s]
 
-        pag = PickupActionGoal()
-        pag.header = Header()
-        pag.goal_id = GoalID()
-        pag.goal = goal
+        # pag = PickupActionGoal()
+        # header = Header()
+        # goal_id = GoalID()
 
         client = actionlib.SimpleActionClient(
             self.grasp_action_topic, PickupAction)
         client.wait_for_server()
         if self.verbose:
             print 'Executing grasp action:', action        
-
-        client.send_goal(pag)
+        # print goal
+        client.send_goal(goal)
 
     def save(self, height_map, ik_pre, height):
         if self.verbose:
@@ -383,6 +412,7 @@ def main(args):
         gdc.move_to_state(ik_pre)
         # gdc.move_to_state(gdc.get_ik('grasp'))
         gdc.execute_grasp_action('close')
+        raw_input()
         gdc.move_to_state(gdc.get_ik('lift'))
         height = gdc.get_object_height()
         gdc.execute_grasp_action('open')
