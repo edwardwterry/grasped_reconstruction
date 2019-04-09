@@ -1,7 +1,7 @@
 #include <grasped_reconstruction/grasped_reconstruction.h>
 
 const float PI_F = 3.14159265358979f;
-typedef pcl::PointCloud<pcl::PointXYZRGB> PointCloud;
+typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
 class GraspedReconstruction
 {
 public:
@@ -12,8 +12,9 @@ public:
     // ch_sub = _n.subscribe("/extract_plane_indices/output", 1, &GraspedReconstruction::convexHullClbk, this);
     // hm_sub = _n.subscribe("/camera/depth/points", 1, &GraspedReconstruction::heightMapClbk, this);
     pc_sub = _n.subscribe("/camera/depth/points", 1, &GraspedReconstruction::pcClbk, this);
+    occ_sub = _n.subscribe("/camera/depth/points", 1, &GraspedReconstruction::occClbk, this);
     gm_sub = _n.subscribe("/elevation_mapping/elevation_map", 1, &GraspedReconstruction::gmClbk, this);
-    // occ_pub = n.advertise<sensor_msgs::PointCloud2>("occluded_voxels", 1);
+    occ_pub = n.advertise<sensor_msgs::PointCloud2>("occluded_voxels", 1);
     // ch_pub = n.advertise<pcl_msgs::PolygonMesh>("convex_hull_mesh", 1);
     // hm_pub = n.advertise<sensor_msgs::PointCloud2>("object_without_table", 1);
     coeff_pub = n.advertise<pcl_msgs::ModelCoefficients>("output", 1);
@@ -45,8 +46,8 @@ public:
     _n.getParam("/rMin", rMin);
   }
   ros::NodeHandle _n;
-  ros::Subscriber pc_sub, gm_sub;
-  ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub;
+  ros::Subscriber pc_sub, gm_sub, occ_sub;
+  ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub;
   image_transport::Publisher hm_im_pub;
   tf::TransformListener listener;
   tf::StampedTransform world_T_lens_link_tf;
@@ -65,7 +66,7 @@ public:
 
     // remove the ground plane
     // http://pointclouds.org/documentation/tutorials/passthrough.php
-    pcl::PassThrough<pcl::PointXYZRGB> pass;
+    pcl::PassThrough<pcl::PointXYZ> pass;
     pass.setInputCloud(cloud);
     pass.setFilterFieldName("z");
     pass.setFilterLimits(-0.5, 0.5);
@@ -84,7 +85,7 @@ public:
     std::cout << "Removed floor" << std::endl;
 
     // Downsample this pc
-    pcl::VoxelGrid<pcl::PointXYZRGB> downsample;
+    pcl::VoxelGrid<pcl::PointXYZ> downsample;
     downsample.setInputCloud(cloud);
     downsample.setLeafSize(0.01f, 0.01f, 0.01f);
     downsample.filter(*cloud);
@@ -96,7 +97,7 @@ public:
     pcl::ModelCoefficients coefficients;
     pcl::PointIndices::Ptr inliers(new pcl::PointIndices());
     // Create the segmentation object
-    pcl::SACSegmentation<pcl::PointXYZRGB> seg;
+    pcl::SACSegmentation<pcl::PointXYZ> seg;
     // Optional
     seg.setOptimizeCoefficients(true);
     // Mandatory
@@ -113,14 +114,14 @@ public:
     pcl_conversions::fromPCL(coefficients, ros_coefficients);
     coeff_pub.publish(ros_coefficients);
 
-    pcl::ExtractIndices<pcl::PointXYZRGB> extract;
+    pcl::ExtractIndices<pcl::PointXYZ> extract;
     extract.setInputCloud(cloud);
     extract.setIndices(inliers);
     extract.setNegative(true);
     extract.filter(*cloud);
 
     // PointCloud::Ptr cloud_tabletop(new PointCloud());
-    // pcl::ExtractIndices<pcl::PointXYZRGB> extract;
+    // pcl::ExtractIndices<pcl::PointXYZ> extract;
     // extract.setInputCloud(cloud);
     // extract.setIndices(inliers);
     // extract.setNegative(false);
@@ -137,7 +138,7 @@ public:
     object_pub.publish(output);
     std::cout << "Published cloud" << std::endl;
 
-    pcl::PointXYZRGB min, max;
+    pcl::PointXYZ min, max;
     pcl::getMinMax3D(*cloud, min, max);
     std::cout << "Got bounding box" << std::endl;
 
@@ -146,34 +147,34 @@ public:
     // // http://www.pcl-users.org/How-to-filter-based-on-color-using-PCL-td2791524.html
     // // Filter for color
     // // build the condition
-    // pcl::ConditionAnd<pcl::PointXYZRGB>::Ptr color_cond(new pcl::ConditionAnd<pcl::PointXYZRGB>());
+    // pcl::ConditionAnd<pcl::PointXYZ>::Ptr color_cond(new pcl::ConditionAnd<pcl::PointXYZ>());
     // if (_n.hasParam("/rMax"))
     // {
-    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("h", pcl::ComparisonOps::LT, rMax)));
+    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZ>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZ>("h", pcl::ComparisonOps::LT, rMax)));
     // }
     // if (_n.hasParam("/rMin"))
     // {
-    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("h", pcl::ComparisonOps::GT, rMin)));
+    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZ>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZ>("h", pcl::ComparisonOps::GT, rMin)));
     // }
     // if (_n.hasParam("/gMax"))
     // {
-    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("s", pcl::ComparisonOps::LT, gMax)));
+    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZ>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZ>("s", pcl::ComparisonOps::LT, gMax)));
     // }
     // if (_n.hasParam("/gMin"))
     // {
-    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("s", pcl::ComparisonOps::GT, gMin)));
+    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZ>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZ>("s", pcl::ComparisonOps::GT, gMin)));
     // }
     // if (_n.hasParam("/bMax"))
     // {
-    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("i", pcl::ComparisonOps::LT, bMax)));
+    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZ>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZ>("i", pcl::ComparisonOps::LT, bMax)));
     // }
     // if (_n.hasParam("/bMin"))
     // {
-    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("i", pcl::ComparisonOps::GT, bMin)));
+    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZ>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZ>("i", pcl::ComparisonOps::GT, bMin)));
     // }
 
     // // build the filter
-    // pcl::ConditionalRemoval<pcl::PointXYZRGB> condrem;
+    // pcl::ConditionalRemoval<pcl::PointXYZ> condrem;
     // condrem.setCondition(color_cond);
     // condrem.setInputCloud(cloud);
     // condrem.setKeepOrganized(false);
@@ -184,16 +185,16 @@ public:
     // pcl::toROSMsg(*cloud, cloud_by_color_sm);
     // cf_pub.publish(cloud_by_color_sm);
     // http://www.pointclouds.org/documentation/tutorials/region_growing_rgb_segmentation.php
-    // pcl::search::Search <pcl::PointXYZRGB>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZRGB>);
-    // pcl::RegionGrowingRGB<pcl::PointXYZRGB> reg;
+    // pcl::search::Search <pcl::PointXYZ>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZ>);
+    // pcl::RegionGrowingRGB<pcl::PointXYZ> reg;
     // reg.setInputCloud(cloud);
     // reg.setIndices(inliers);
     // reg.setSearchMethod(tree);
     // reg.setDistanceThreshold(10);
     // reg.setPointColorThreshold(6);
     // reg.setRegionColorThreshold(5);
-    // reg.setMinClusterSize(600);
-    // pcl::PointCloud<pcl::PointXYZRGB>::Ptr colored_cloud(new pcl::PointCloud<pcl::PointXYZRGB>); // = reg.getColoredCloud();
+    // reg.setMinClusterSize(10);
+    // pcl::PointCloud<pcl::PointXYZ>::Ptr colored_cloud(new pcl::PointCloud<pcl::PointXYZ>); // = reg.getColoredCloud();
     // colored_cloud = reg.getColoredCloud();
     // sensor_msgs::PointCloud2 cloud_by_color_sm;
     // pcl::toROSMsg(*colored_cloud, cloud_by_color_sm);
@@ -222,6 +223,94 @@ public:
       marker.color.b = 0.0;
       bb_pub.publish(marker);
     }
+  }
+
+  void occClbk(const sensor_msgs::PointCloud2ConstPtr &cloud_msg)
+  {
+
+    std::cout << "Received pc message" << std::endl;
+    // http://wiki.ros.org/pcl/Tutorials#pcl.2BAC8-Tutorials.2BAC8-hydro.sensor_msgs.2BAC8-PointCloud2
+    // Convert the sensor_msgs/PointCloud2 data to pcl/PointCloud
+    sensor_msgs::PointCloud2Ptr msg_transformed(new sensor_msgs::PointCloud2());
+    std::string target_frame("world");
+    pcl_ros::transformPointCloud(target_frame, *cloud_msg, *msg_transformed, listener);
+    PointCloud::Ptr cloud(new PointCloud());
+    pcl::fromROSMsg(*msg_transformed, *cloud);
+
+    // remove the ground plane
+    // http://pointclouds.org/documentation/tutorials/passthrough.php
+    pcl::PassThrough<pcl::PointXYZ> pass;
+    pass.setInputCloud(cloud);
+    pass.setFilterFieldName("z");
+    pass.setFilterLimits(-0.5, 0.5);
+    pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
+    pass.filter(*cloud);
+
+    pass.setFilterFieldName("x");
+    pass.setFilterLimits(-0.1, 0.3);
+    pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
+    pass.filter(*cloud);
+
+    pass.setFilterFieldName("y");
+    pass.setFilterLimits(-0.1, 0.1);
+    pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
+    pass.filter(*cloud);
+    std::cout << "Removed floor" << std::endl;
+
+    // Downsample this pc
+    pcl::VoxelGrid<pcl::PointXYZ> downsample;
+    downsample.setInputCloud(cloud);
+    downsample.setLeafSize(0.01f, 0.01f, 0.01f);
+    downsample.filter(*cloud);
+
+    // pcl::PCLPointCloud2 *cloud = new pcl::PCLPointCloud2;
+    // pcl::PCLPointCloud2ConstPtr cloudPtr(cloud);
+    pcl::PCLPointCloud2 cloud_filtered2;
+
+    // Convert to PCL data type
+    // pcl_conversions::toPCL(*cloud_msg, *cloud);
+
+    // PointCloud *pc = new pcl::PointCloud<pcl::PointXYZ>;
+    // // https://stackoverflow.com/questions/10644429/create-a-pclpointcloudptr-from-a-pclpointcloud
+    // PointCloud::Ptr pcPtr(pc);
+
+    // pcl::fromPCLPointCloud2(*cloud, *pc);
+
+    pcl::VoxelGridOcclusionEstimation<pcl::PointXYZ> occ;
+
+    occ.setInputCloud(cloud);
+    occ.setLeafSize(0.01, 0.01, 0.01);
+    occ.initializeVoxelGrid();
+    // occ.filter(cloud_filtered);
+    // Eigen::Vector3f out = occ.getMaxBoundCoordinates();
+    // std::cout<<"getMaxBoundCoordinates: "<<out.matrix()<<std::endl;
+    // // occ.initializeVoxelGrid();
+    Eigen::Vector3i box = occ.getMaxBoxCoordinates();
+
+    PointCloud cloud_filtered = occ.getFilteredPointCloud();
+    std::vector<Eigen::Vector3i> occluded_voxels;
+    occ.occlusionEstimationAll(occluded_voxels);
+    std::cout << "Proportion occluded: " << (float)occluded_voxels.size() / (float)(box(0) * box(1) * box(2)) << std::endl;
+    PointCloud cloud_occluded;
+    for (const auto &voxel : occluded_voxels)
+    {
+      // std::cout<<"voxel(0): "<<voxel(0)<<std::endl;
+      Eigen::Vector4f coord = occ.getCentroidCoordinate(voxel);
+      cloud_occluded.push_back(pcl::PointXYZ(coord(0), coord(1), coord(2)));
+    }
+    // pcl::toPCLPointCloud2(cloud_filtered, cloud_filtered2);
+    // // Convert to ROS data type
+    pcl::toPCLPointCloud2(cloud_occluded, cloud_filtered2);
+
+    sensor_msgs::PointCloud2 output;
+
+    pcl_conversions::fromPCL(cloud_filtered2, output);
+    output.header.frame_id = "world";
+    // output.height = 640;
+    // output.width = 480;
+
+    // Publish the data
+    occ_pub.publish(output);
   }
 
   void gmClbk(const grid_map_msgs::GridMap::ConstPtr &msg)
