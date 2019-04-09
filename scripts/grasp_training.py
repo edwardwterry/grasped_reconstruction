@@ -153,6 +153,7 @@ class GraspDataCollection:
                 print 'Height: ', height
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
+        return height
 
     def position_object(self):
         if self.verbose:
@@ -242,13 +243,13 @@ class GraspDataCollection:
         ps.header.frame_id = "/" + self.reference_frame
         ps.pose.position.x = x
         ps.pose.position.y = y
-
-        if self.phase == 'pre':
-            ps.pose.position.z = self.pre_grasp_height
-        elif self.phase == 'grasp':
-            ps.pose.position.z = self.post_grasp_height
-        else:
-            ps.pose.position.z = self.lift_height
+        ps.pose.position.z = self.get_object_height() + 0.25
+        # if self.phase == 'pre':
+        #     ps.pose.position.z = self.pre_grasp_height
+        # elif self.phase == 'grasp':
+        #     ps.pose.position.z = self.post_grasp_height
+        # else:
+        #     ps.pose.position.z = self.lift_height
         q = tf.transformations.quaternion_from_euler(
             math.pi, 0, th, axes='sxyz')
         ps.pose.orientation.x = q[0]
@@ -315,10 +316,10 @@ class GraspDataCollection:
             gpost.joint_names.append(name_cl)
             jtp_c = JointTrajectoryPoint()
             jtp_c.positions.append(val_cl)
-            jtp_c.time_from_start.secs = 1 # [s]
+            jtp_c.time_from_start.secs = 2 # [s]
             jtp_o = JointTrajectoryPoint()
             jtp_o.positions.append(val_op)
-            jtp_o.time_from_start.secs = 1 # [s]
+            jtp_o.time_from_start.secs = 2 # [s]
             pgpost.points.append(jtp_c)
             gpost.points.append(jtp_o)
 
@@ -339,17 +340,17 @@ class GraspDataCollection:
         postplretr = GripperTranslation()
 
         v3s = Vector3Stamped()
-        v3s.header.frame_id = "/" + self.palm_link
-        v3s.vector.y = -1.0
+        v3s.header.frame_id = "/" + self.reference_frame
+        v3s.vector.z = -1.0
         pregrapp.direction = v3s
-        pregrapp.desired_distance = 0.10 # [m]
+        pregrapp.desired_distance = 0.2 # [m]
         pregrapp.min_distance = 0.02 # [m]
 
         v3s = Vector3Stamped()
-        v3s.header.frame_id = "/" + self.palm_link
+        v3s.header.frame_id = "/" + self.reference_frame
         v3s.vector.z = 1.0
         postgrretr.direction = v3s
-        postgrretr.desired_distance = 0.3 # [m]
+        postgrretr.desired_distance = 0.2 # [m]
         postgrretr.min_distance = 0.02 # [m]        
 
         v3s = Vector3Stamped()
@@ -364,10 +365,10 @@ class GraspDataCollection:
         grasp.grasp_pose = gp
         grasp.grasp_quality = 0.5
         grasp.pre_grasp_approach = pregrapp
-        # grasp.post_grasp_retreat = postgrretr
+        grasp.post_grasp_retreat = postgrretr
         # grasp.post_place_retreat = postplretr
         grasp.max_contact_force = -1
-        # grasp.allowed_touch_objects = [self.object_name]        
+        grasp.allowed_touch_objects = [self.object_name]        
 
         goal = PickupGoal()
         # goal.target_name = self.object_name
