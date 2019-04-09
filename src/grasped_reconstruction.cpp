@@ -36,6 +36,13 @@ public:
       ROS_ERROR("%s", ex.what());
     }
     std::cout << "robot_base to lens_link received" << std::endl;
+
+    _n.getParam("/bMax", bMax);
+    _n.getParam("/gMax", gMax);
+    _n.getParam("/rMax", rMax);
+    _n.getParam("/bMin", bMin);
+    _n.getParam("/gMin", gMin);
+    _n.getParam("/rMin", rMin);
   }
   ros::NodeHandle _n;
   ros::Subscriber pc_sub, gm_sub;
@@ -43,6 +50,7 @@ public:
   image_transport::Publisher hm_im_pub;
   tf::TransformListener listener;
   tf::StampedTransform world_T_lens_link_tf;
+  int rMax, rMin, gMax, gMin, bMax, bMin;
 
   void pcClbk(const sensor_msgs::PointCloud2ConstPtr &msg)
   {
@@ -133,38 +141,63 @@ public:
     pcl::getMinMax3D(*cloud, min, max);
     std::cout << "Got bounding box" << std::endl;
 
-    // pcl::PointCloud<pcl::PointXYZHSV>::Ptr hsv_cloud(new pcl::PointCloud<pcl::PointXYZHSV>);
+    // // pcl::PointCloud<pcl::PointXYZHSV>::Ptr hsv_cloud(new pcl::PointCloud<pcl::PointXYZHSV>);
 
-    // pcl::PointCloudXYZRGBtoXYZHSV(*cloud, *hsv_cloud);
-    // http://www.pcl-users.org/How-to-filter-based-on-color-using-PCL-td2791524.html
-    // Filter for color
-    // build the condition
-    int rMax = 200;
-    int rMin = 280;
-    int gMax = 1;
-    int gMin = 0;
-    int bMax = 1;
-    int bMin = 0;
-    pcl::ConditionAnd<pcl::PointXYZRGB>::Ptr color_cond(new pcl::ConditionAnd<pcl::PointXYZRGB>());
-    color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("h", pcl::ComparisonOps::LT, rMax)));
-    color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("h", pcl::ComparisonOps::GT, rMin)));
-    color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("s", pcl::ComparisonOps::LT, gMax)));
-    color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("s", pcl::ComparisonOps::GT, gMin)));
-    color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("i", pcl::ComparisonOps::LT, bMax)));
-    color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("i", pcl::ComparisonOps::GT, bMin)));
+    // // http://www.pcl-users.org/How-to-filter-based-on-color-using-PCL-td2791524.html
+    // // Filter for color
+    // // build the condition
+    // pcl::ConditionAnd<pcl::PointXYZRGB>::Ptr color_cond(new pcl::ConditionAnd<pcl::PointXYZRGB>());
+    // if (_n.hasParam("/rMax"))
+    // {
+    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("h", pcl::ComparisonOps::LT, rMax)));
+    // }
+    // if (_n.hasParam("/rMin"))
+    // {
+    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("h", pcl::ComparisonOps::GT, rMin)));
+    // }
+    // if (_n.hasParam("/gMax"))
+    // {
+    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("s", pcl::ComparisonOps::LT, gMax)));
+    // }
+    // if (_n.hasParam("/gMin"))
+    // {
+    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("s", pcl::ComparisonOps::GT, gMin)));
+    // }
+    // if (_n.hasParam("/bMax"))
+    // {
+    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("i", pcl::ComparisonOps::LT, bMax)));
+    // }
+    // if (_n.hasParam("/bMin"))
+    // {
+    //   color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("i", pcl::ComparisonOps::GT, bMin)));
+    // }
 
-    // build the filter
-    pcl::ConditionalRemoval<pcl::PointXYZRGB> condrem;
-    condrem.setCondition(color_cond);
-    condrem.setInputCloud(cloud);
-    condrem.setKeepOrganized(false);
+    // // build the filter
+    // pcl::ConditionalRemoval<pcl::PointXYZRGB> condrem;
+    // condrem.setCondition(color_cond);
+    // condrem.setInputCloud(cloud);
+    // condrem.setKeepOrganized(false);
 
-    // apply filter
-    // condrem.filter(*hsv_cloud);
-    // pcl::PointCloudXYZHSVtoXYZRGB(*hsv_cloud, *cloud);
-    sensor_msgs::PointCloud2 cloud_by_color_sm;
-    pcl::toROSMsg(*cloud, cloud_by_color_sm);
-    cf_pub.publish(cloud_by_color_sm);
+    // // apply filter
+    // condrem.filter(*cloud);
+    // sensor_msgs::PointCloud2 cloud_by_color_sm;
+    // pcl::toROSMsg(*cloud, cloud_by_color_sm);
+    // cf_pub.publish(cloud_by_color_sm);
+    // http://www.pointclouds.org/documentation/tutorials/region_growing_rgb_segmentation.php
+    // pcl::search::Search <pcl::PointXYZRGB>::Ptr tree (new pcl::search::KdTree<pcl::PointXYZRGB>);
+    // pcl::RegionGrowingRGB<pcl::PointXYZRGB> reg;
+    // reg.setInputCloud(cloud);
+    // reg.setIndices(inliers);
+    // reg.setSearchMethod(tree);
+    // reg.setDistanceThreshold(10);
+    // reg.setPointColorThreshold(6);
+    // reg.setRegionColorThreshold(5);
+    // reg.setMinClusterSize(600);
+    // pcl::PointCloud<pcl::PointXYZRGB>::Ptr colored_cloud(new pcl::PointCloud<pcl::PointXYZRGB>); // = reg.getColoredCloud();
+    // colored_cloud = reg.getColoredCloud();
+    // sensor_msgs::PointCloud2 cloud_by_color_sm;
+    // pcl::toROSMsg(*colored_cloud, cloud_by_color_sm);
+    // cf_pub.publish(cloud_by_color_sm);
 
     if (coefficients.values.size() > 0)
     {
