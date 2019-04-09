@@ -55,20 +55,20 @@ class GraspDataCollection:
         self.model_name = 'jaco_on_table'
         self.palm_link = 'jaco_fingers_base_link'
         self.palm_link_eef = 'jaco_6_hand_limb'
-        self.eef_link = 'Wrist' #'jaco_6_hand_limb'
+        self.eef_link = 'Wrist'  # 'jaco_6_hand_limb'
         self.joint_to_exclude = 'base_to_jaco_on_table'
         self.joint_traj_action_topic = '/jaco/joint_trajectory_action'
         self.grasp_action_topic_jen = '/jaco/grasp_action'
-        self.grasp_action_topic = '/pickup' # TODO goal or no goal?
+        self.grasp_action_topic = '/pickup'  # TODO goal or no goal?
         # reads in the joint names as a list
         self.joint_names = self.load_joint_properties()
         # dictionary {joint_name: value}
         self.joint_states = self.get_joint_states()
-        self.object_height = 0.0 # [m]
+        self.object_height = 0.0  # [m]
         self.object_position = [0.4, 0.0, 0.76]
         self.phase = 'pre'
-        self.finger_joint_angles_grasp = 0.53
-        self.finger_joint_angles_ungrasp = 0.05
+        self.finger_joint_angles_grasp = 0.1
+        self.finger_joint_angles_ungrasp = 0.0
         self.finger_joint_names = ['jaco_finger_joint_0',
                                    'jaco_finger_joint_2', 'jaco_finger_joint_4']
         self.arm_home_state = {}
@@ -137,7 +137,7 @@ class GraspDataCollection:
             rs.joint_state.position = vals
             res = req(header, fk_link_names, rs)
         except rospy.ServiceException, e:
-            print "Service call failed: %s" % e        
+            print "Service call failed: %s" % e
         return res.pose_stamped[0]
 
     def get_object_height(self):
@@ -237,19 +237,13 @@ class GraspDataCollection:
         sig_pos = 0.0001  # [m] std dev for position
         x = np.random.normal(self.object_position[0], sig_pos)
         y = np.random.normal(self.object_position[1], sig_pos)
-        th = 0  # np.random.uniform(0.0, math.pi * 2.0)
+        th = np.random.uniform(0.0, math.pi * 2.0)
         # https://www.programcreek.com/python/example/70252/geometry_msgs.msg.PoseStamped
         ps = PoseStamped()
         ps.header.frame_id = "/" + self.reference_frame
         ps.pose.position.x = x
         ps.pose.position.y = y
-        ps.pose.position.z = self.get_object_height() + 0.25
-        # if self.phase == 'pre':
-        #     ps.pose.position.z = self.pre_grasp_height
-        # elif self.phase == 'grasp':
-        #     ps.pose.position.z = self.post_grasp_height
-        # else:
-        #     ps.pose.position.z = self.lift_height
+        ps.pose.position.z = self.get_object_height() + 0.24  # 0.24
         q = tf.transformations.quaternion_from_euler(
             math.pi, 0, th, axes='sxyz')
         ps.pose.orientation.x = q[0]
@@ -295,18 +289,18 @@ class GraspDataCollection:
         # http://docs.ros.org/api/actionlib/html/classactionlib_1_1simple__action__client_1_1SimpleActionClient.html
         # print client.get_state()
 
-    def execute_grasp_action(self, action):
+    def pickup(self):
         js_closed = {}
         js_open = {}
 
         if self.verbose:
-            print 'Executing grasp action:', action
+            print 'Executing pickup action:'
         for finger_joint_name in self.finger_joint_names:
             angle_closed = self.finger_joint_angles_grasp
             angle_open = self.finger_joint_angles_ungrasp
             js_closed[finger_joint_name] = angle_closed
             js_open[finger_joint_name] = angle_open
-        
+
         pgpost = JointTrajectory()
         gpost = JointTrajectory()
 
@@ -316,26 +310,22 @@ class GraspDataCollection:
             gpost.joint_names.append(name_cl)
             jtp_c = JointTrajectoryPoint()
             jtp_c.positions.append(val_cl)
-            jtp_c.time_from_start.secs = 2 # [s]
+            jtp_c.time_from_start.secs = 2  # [s]
             jtp_o = JointTrajectoryPoint()
             jtp_o.positions.append(val_op)
-            jtp_o.time_from_start.secs = 2 # [s]
+            jtp_o.time_from_start.secs = 2  # [s]
             pgpost.points.append(jtp_c)
             gpost.points.append(jtp_o)
 
-        if action == 'close': # reverse the prior order
-            pgpost, gpost = gpost, pgpost # TODO verify that these have been properly switched!
+        # if action == 'close':  # reverse the prior order
+        pgpost, gpost = gpost, pgpost
 
         grasp = Grasp()
 
-        # gp = PoseStamped()
         gp = self.get_eef_pose()
         print "eef pose: ", gp
-        # print self.generate_grasp_pose()
 
-        # rospy.sleep(20)
-
-        pregrapp = GripperTranslation() # check wrt which axis
+        pregrapp = GripperTranslation()
         postgrretr = GripperTranslation()
         postplretr = GripperTranslation()
 
@@ -343,47 +333,53 @@ class GraspDataCollection:
         v3s.header.frame_id = "/" + self.reference_frame
         v3s.vector.z = -1.0
         pregrapp.direction = v3s
-        pregrapp.desired_distance = 0.2 # [m]
-        pregrapp.min_distance = 0.02 # [m]
+        pregrapp.desired_distance = 0.15  # [m]
+        pregrapp.min_distance = 0.02  # [m]
 
         v3s = Vector3Stamped()
         v3s.header.frame_id = "/" + self.reference_frame
         v3s.vector.z = 1.0
         postgrretr.direction = v3s
-        postgrretr.desired_distance = 0.2 # [m]
-        postgrretr.min_distance = 0.02 # [m]        
+        postgrretr.desired_distance = 0.15  # [m]
+        postgrretr.min_distance = 0.02  # [m]
 
         v3s = Vector3Stamped()
         v3s.header.frame_id = "/" + self.palm_link
         v3s.vector.z = 1.0
         postplretr.direction = v3s
-        postplretr.desired_distance = 0.3 # [m]
-        postplretr.min_distance = 0.02 # [m]    
+        postplretr.desired_distance = 0.3  # [m]
+        postplretr.min_distance = 0.02  # [m]
 
-        grasp.pre_grasp_posture = pgpost
-        grasp.grasp_posture = gpost
+        # grasp.pre_grasp_posture = pgpost
+        # grasp.grasp_posture = gpost
         grasp.grasp_pose = gp
         grasp.grasp_quality = 0.5
         grasp.pre_grasp_approach = pregrapp
-        grasp.post_grasp_retreat = postgrretr
+        # grasp.post_grasp_retreat = postgrretr
         # grasp.post_place_retreat = postplretr
         grasp.max_contact_force = -1
-        grasp.allowed_touch_objects = [self.object_name]        
+        grasp.allowed_touch_objects = [self.object_name]
 
         goal = PickupGoal()
-        # goal.target_name = self.object_name
+        # goal.support_surface_name = 'tabletop_ontop'
+        goal.support_surface_name = 'table_top'
+        goal.allow_gripper_support_collision = True
+        goal.minimize_object_distance = True
+        goal.target_name = self.object_name
         goal.group_name = self.planning_group_name
+        goal.attached_object_touch_links = ['all']
+        goal.allowed_touch_objects = [self.object_name]
         goal.end_effector = self.eef_link
         goal.possible_grasps = [grasp]
-        goal.allowed_planning_time = 3.0 # [s]
+        goal.allowed_planning_time = 3.0  # [s]
+        goal.planning_options.replan = True
+        goal.planning_options.replan_attempts = 10
 
         print goal
 
         client = actionlib.SimpleActionClient(
             self.grasp_action_topic, PickupAction)
         client.wait_for_server()
-        if self.verbose:
-            print 'Executing grasp action:', action        
         # print goal
         client.send_goal(goal)
 
@@ -401,12 +397,9 @@ def main(args):
     gdc.save_arm_home_state()
     while gdc.current_trial_no < gdc.total_num_trials:
         gdc.position_object()
-        height_map = gdc.height_map # TODO make not None
-        # ik_pre = gdc.get_ik('pre')
-        # gdc.move_to_state(ik_pre)
-        # gdc.move_to_state(gdc.get_ik('grasp'))
-        # raw_input()
-        gdc.execute_grasp_action('close')
+        height_map = gdc.height_map  # TODO make not None
+        gdc.pickup()
+        # gdc.execute_grasp_action('open')
         # gdc.move_to_state(gdc.get_ik('lift'))
         # height = gdc.get_object_height()
         # gdc.execute_grasp_action('open')
