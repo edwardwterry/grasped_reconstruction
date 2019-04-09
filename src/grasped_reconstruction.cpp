@@ -53,7 +53,6 @@ public:
   tf::StampedTransform world_T_lens_link_tf;
   int rMax, rMin, gMax, gMin, bMax, bMin;
 
-
   void pcClbk(const sensor_msgs::PointCloud2ConstPtr &msg)
   {
     std::cout << "Received pc message" << std::endl;
@@ -142,6 +141,55 @@ public:
     pcl::PointXYZ min, max;
     pcl::getMinMax3D(*cloud, min, max);
     std::cout << "Got bounding box" << std::endl;
+
+    // ////// occlusion begin
+    // pcl::PCLPointCloud2 cloud_filtered2;
+    // std::string lens_frame("lens_link");
+    // pcl_ros::transformPointCloud(lens_frame, *cloud, *cloud, listener);
+
+    // pcl::VoxelGridOcclusionEstimation<pcl::PointXYZ> occ;
+
+    // occ.setInputCloud(cloud);
+    // occ.setLeafSize(0.01, 0.01, 0.01);
+    // occ.initializeVoxelGrid();
+    // // occ.filter(cloud_filtered);
+    // // Eigen::Vector3f out = occ.getMaxBoundCoordinates();
+    // // std::cout<<"getMaxBoundCoordinates: "<<out.matrix()<<std::endl;
+    // // // occ.initializeVoxelGrid();
+    // pcl_ros::transformPointCloud(target_frame, *cloud, *cloud, listener);
+    // Eigen::Vector3i box = occ.getMaxBoxCoordinates();
+
+    // PointCloud cloud_filtered = occ.getFilteredPointCloud();
+    // std::vector<Eigen::Vector3i> occluded_voxels;
+    // occ.occlusionEstimationAll(occluded_voxels);
+    // std::cout << "Proportion occluded: " << (float)occluded_voxels.size() / (float)(box(0) * box(1) * box(2)) << std::endl;
+    // PointCloud cloud_occluded;
+    // for (const auto &voxel : occluded_voxels)
+    // {
+    //   // std::cout<<"voxel(0): "<<voxel(0)<<std::endl;
+    //   Eigen::Vector4f coord = occ.getCentroidCoordinate(voxel);
+    //   cloud_occluded.push_back(pcl::PointXYZ(coord(0), coord(1), coord(2)));
+    // }
+    // // pcl::toPCLPointCloud2(cloud_filtered, cloud_filtered2);
+    // // // Convert to ROS data type
+    // pcl::toPCLPointCloud2(cloud_occluded, cloud_filtered2);
+
+    // sensor_msgs::PointCloud2Ptr output2(new sensor_msgs::PointCloud2());
+
+    // pcl_conversions::fromPCL(cloud_filtered2, *output2);
+    // output2->header.frame_id = std::string("lens_link");
+    // sensor_msgs::PointCloud2Ptr msg_transformed2(new sensor_msgs::PointCloud2());
+    // std::string target_frame2("world");
+    // pcl_ros::transformPointCloud(target_frame2, *output2, *msg_transformed2, listener);
+    // msg_transformed2->header.frame_id = "world";
+    // // output.height = 640;
+    // // output.width = 480;
+
+    // // Publish the data
+    // occ_pub.publish(*msg_transformed2);
+
+    // ////// occlusion end
+
 
     // // pcl::PointCloud<pcl::PointXYZHSV>::Ptr hsv_cloud(new pcl::PointCloud<pcl::PointXYZHSV>);
 
@@ -244,7 +292,7 @@ public:
     pcl::PassThrough<pcl::PointXYZ> pass;
     pass.setInputCloud(cloud);
     pass.setFilterFieldName("z");
-    pass.setFilterLimits(-0.5, 0.5);
+    pass.setFilterLimits(-0.5, 0.73);
     pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
     pass.filter(*cloud);
 
@@ -294,30 +342,42 @@ public:
     std::vector<Eigen::Vector3i> occluded_voxels;
     occ.occlusionEstimationAll(occluded_voxels);
     std::cout << "Proportion occluded: " << (float)occluded_voxels.size() / (float)(box(0) * box(1) * box(2)) << std::endl;
-    PointCloud cloud_occluded;
+    PointCloud::Ptr cloud_occluded(new PointCloud);
     for (const auto &voxel : occluded_voxels)
     {
       // std::cout<<"voxel(0): "<<voxel(0)<<std::endl;
       Eigen::Vector4f coord = occ.getCentroidCoordinate(voxel);
-      cloud_occluded.push_back(pcl::PointXYZ(coord(0), coord(1), coord(2)));
+      cloud_occluded->push_back(pcl::PointXYZ(coord(0), coord(1), coord(2)));
     }
     // pcl::toPCLPointCloud2(cloud_filtered, cloud_filtered2);
     // // Convert to ROS data type
-    pcl::toPCLPointCloud2(cloud_occluded, cloud_filtered2);
+    // pcl::PassThrough<pcl::PointXYZ> pass;
+
+    //convert to world
+    cloud_occluded->header.frame_id = "lens_link";
+    pcl_ros::transformPointCloud(target_frame, *cloud_occluded, *cloud_occluded, listener);
+
+    pass.setInputCloud(cloud_occluded);
+    pass.setFilterFieldName("z");
+    pass.setFilterLimits(-0.5, 0.73);
+    pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
+    pass.filter(*cloud_occluded);
+
+    pcl::toPCLPointCloud2(*cloud_occluded, cloud_filtered2);
 
     sensor_msgs::PointCloud2Ptr output(new sensor_msgs::PointCloud2());
 
     pcl_conversions::fromPCL(cloud_filtered2, *output);
-    output->header.frame_id = std::string("lens_link");
-    sensor_msgs::PointCloud2Ptr msg_transformed2(new sensor_msgs::PointCloud2());
-    std::string target_frame2("world");
-    pcl_ros::transformPointCloud(target_frame2, *output, *msg_transformed2, listener);
-    msg_transformed2->header.frame_id = "world";
+    // output->header.frame_id = std::string("lens_link");
+    // sensor_msgs::PointCloud2Ptr msg_transformed2(new sensor_msgs::PointCloud2());
+    // std::string target_frame2("world");
+    // pcl_ros::transformPointCloud(target_frame2, *output, *msg_transformed2, listener);
+    output->header.frame_id = "world";
     // output.height = 640;
     // output.width = 480;
 
     // Publish the data
-    occ_pub.publish(*msg_transformed2);
+    occ_pub.publish(*output);
   }
 
   void gmClbk(const grid_map_msgs::GridMap::ConstPtr &msg)
