@@ -47,13 +47,14 @@ class GraspDataCollection:
         self.current_trial_no = 0
         self.object_name = 'cube1'
         self.planning_group_name = 'Arm'
-        self.pre_grasp_height = 1.1
-        self.post_grasp_height = 1.0
+        self.pre_grasp_height = 1.3
+        self.post_grasp_height = 1.3
         self.lift_height = 1.3
-        self.joint_angle_tolerance = 0.1
+        self.joint_angle_tolerance = 0.01
         self.reference_frame = 'world'
         self.model_name = 'jaco_on_table'
         self.palm_link = 'jaco_fingers_base_link'
+        self.palm_link_eef = 'jaco_6_hand_limb'
         self.eef_link = 'Wrist' #'jaco_6_hand_limb'
         self.joint_to_exclude = 'base_to_jaco_on_table'
         self.joint_traj_action_topic = '/jaco/joint_trajectory_action'
@@ -116,13 +117,14 @@ class GraspDataCollection:
         self.current_trial_no += 1
 
     def get_eef_pose(self):
-        js = self.get_joint_states()
+        # js = self.get_joint_states()
+        js = self.get_ik('grasp')
         rospy.wait_for_service('/compute_fk')
         try:
             req = rospy.ServiceProxy('/compute_fk', GetPositionFK)
             header = Header()
             header.frame_id = "/" + self.reference_frame
-            fk_link_names = [self.palm_link]
+            fk_link_names = [self.palm_link_eef]
             rs = RobotState()
             rs.joint_state.header.frame_id = "/" + self.reference_frame
             names = []
@@ -240,6 +242,7 @@ class GraspDataCollection:
         ps.header.frame_id = "/" + self.reference_frame
         ps.pose.position.x = x
         ps.pose.position.y = y
+
         if self.phase == 'pre':
             ps.pose.position.z = self.pre_grasp_height
         elif self.phase == 'grasp':
@@ -311,79 +314,69 @@ class GraspDataCollection:
             pgpost.joint_names.append(name_cl)
             gpost.joint_names.append(name_cl)
             jtp_c = JointTrajectoryPoint()
-            jtp_c.positions.append(val_op)
             jtp_c.positions.append(val_cl)
             jtp_c.time_from_start.secs = 1 # [s]
             jtp_o = JointTrajectoryPoint()
-            jtp_o.positions.append(val_cl)
             jtp_o.positions.append(val_op)
             jtp_o.time_from_start.secs = 1 # [s]
-            pgpost.points.append(jtp_o)
             pgpost.points.append(jtp_c)
             gpost.points.append(jtp_o)
-            gpost.points.append(jtp_c)
 
-
-        # for name, val in js_closed.items():
-        #     jtp = JointTrajectoryPoint()
-        #     jtp.positions.append(val)
-        #     jtp.time_from_start.secs = 1 # [s]
-        #     pgpost.points.append(jtp)
-
-        # for name, val in js_open.items():
-        #     gpost.joint_names.append(name)
-        #     jtp = JointTrajectoryPoint()
-        #     jtp.positions.append(val)
-        #     jtp.time_from_start.secs = 1 # [s]
-        #     gpost.points.append(jtp)
-
-
-        if action == 'open': # reverse the prior order
+        if action == 'close': # reverse the prior order
             pgpost, gpost = gpost, pgpost # TODO verify that these have been properly switched!
 
         grasp = Grasp()
 
-        gp = PoseStamped()
+        # gp = PoseStamped()
         gp = self.get_eef_pose()
+        print "eef pose: ", gp
+        # print self.generate_grasp_pose()
+
+        # rospy.sleep(20)
 
         pregrapp = GripperTranslation() # check wrt which axis
         postgrretr = GripperTranslation()
-        # postplretr = GripperTranslation()
+        postplretr = GripperTranslation()
 
         v3s = Vector3Stamped()
-        v3s.header.frame_id = "/" + self.reference_frame
-        v3s.vector.z = -1.0
+        v3s.header.frame_id = "/" + self.palm_link
+        v3s.vector.y = -1.0
         pregrapp.direction = v3s
-        pregrapp.desired_distance = 0.2 # [m]
-        pregrapp.min_distance = 0.05 # [m]
+        pregrapp.desired_distance = 0.10 # [m]
+        pregrapp.min_distance = 0.02 # [m]
 
         v3s = Vector3Stamped()
-        v3s.header.frame_id = "/" + self.reference_frame
+        v3s.header.frame_id = "/" + self.palm_link
         v3s.vector.z = 1.0
         postgrretr.direction = v3s
-        postgrretr.desired_distance = 0.2 # [m]
-        postgrretr.min_distance = 0.05 # [m]        
+        postgrretr.desired_distance = 0.3 # [m]
+        postgrretr.min_distance = 0.02 # [m]        
+
+        v3s = Vector3Stamped()
+        v3s.header.frame_id = "/" + self.palm_link
+        v3s.vector.z = 1.0
+        postplretr.direction = v3s
+        postplretr.desired_distance = 0.3 # [m]
+        postplretr.min_distance = 0.02 # [m]    
 
         grasp.pre_grasp_posture = pgpost
         grasp.grasp_posture = gpost
         grasp.grasp_pose = gp
         grasp.grasp_quality = 0.5
         grasp.pre_grasp_approach = pregrapp
-        grasp.post_grasp_retreat = postgrretr
+        # grasp.post_grasp_retreat = postgrretr
         # grasp.post_place_retreat = postplretr
         grasp.max_contact_force = -1
-        grasp.allowed_touch_objects = [self.object_name]        
+        # grasp.allowed_touch_objects = [self.object_name]        
 
         goal = PickupGoal()
-        goal.target_name = self.object_name
+        # goal.target_name = self.object_name
         goal.group_name = self.planning_group_name
         goal.end_effector = self.eef_link
         goal.possible_grasps = [grasp]
         goal.allowed_planning_time = 3.0 # [s]
 
-        # pag = PickupActionGoal()
-        # header = Header()
-        # goal_id = GoalID()
+        print goal
 
         client = actionlib.SimpleActionClient(
             self.grasp_action_topic, PickupAction)
@@ -408,17 +401,17 @@ def main(args):
     while gdc.current_trial_no < gdc.total_num_trials:
         gdc.position_object()
         height_map = gdc.height_map # TODO make not None
-        ik_pre = gdc.get_ik('pre')
-        gdc.move_to_state(ik_pre)
+        # ik_pre = gdc.get_ik('pre')
+        # gdc.move_to_state(ik_pre)
         # gdc.move_to_state(gdc.get_ik('grasp'))
+        # raw_input()
         gdc.execute_grasp_action('close')
-        raw_input()
-        gdc.move_to_state(gdc.get_ik('lift'))
-        height = gdc.get_object_height()
-        gdc.execute_grasp_action('open')
-        gdc.save(height_map, ik_pre, height)
-        gdc.increment_current_trial_no()
-        gdc.return_arm_home()
+        # gdc.move_to_state(gdc.get_ik('lift'))
+        # height = gdc.get_object_height()
+        # gdc.execute_grasp_action('open')
+        # gdc.save(height_map, ik_pre, height)
+        # gdc.increment_current_trial_no()
+        # gdc.return_arm_home()
 
         rospy.spin()
         if rospy.is_shutdown():
