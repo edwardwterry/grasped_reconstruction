@@ -52,6 +52,47 @@ public:
   tf::TransformListener listener;
   tf::StampedTransform world_T_lens_link_tf;
   int rMax, rMin, gMax, gMin, bMax, bMin;
+  PointCloud combo_orig, orig_observed, orig_unobserved;
+  bool orig_observed_set = false;
+  bool orig_unobserved_set = false;
+  pcl::PointXYZ orig_bb_min, orig_bb_max;
+
+  void make_combo()
+  {
+    if (orig_observed_set && orig_unobserved_set)
+    {
+      combo_orig = orig_observed;
+      combo_orig += orig_unobserved;
+      PointCloud::Ptr cl(new PointCloud);
+      *cl = combo_orig;
+      pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
+      sor.setInputCloud(cl);
+      sor.setMeanK(50);
+      sor.setStddevMulThresh(1.0);
+      sor.filter(*cl);
+      pcl::getMinMax3D(*cl, orig_bb_min, orig_bb_max);
+    }
+    visualization_msgs::Marker marker;
+    marker.header.frame_id = "world";
+    marker.header.stamp = ros::Time();
+    marker.type = visualization_msgs::Marker::CUBE;
+    marker.action = visualization_msgs::Marker::ADD;
+    marker.pose.position.x = 0.5f * (orig_bb_max.x + orig_bb_min.x);
+    marker.pose.position.y = 0.5f * (orig_bb_max.y + orig_bb_min.y);
+    marker.pose.position.z = 0.5f * (orig_bb_max.z + orig_bb_min.z);
+    marker.pose.orientation.x = 0.0;
+    marker.pose.orientation.y = 0.0;
+    marker.pose.orientation.z = 0.0;
+    marker.pose.orientation.w = 1.0;
+    marker.scale.x = orig_bb_max.x - orig_bb_min.x;
+    marker.scale.y = orig_bb_max.y - orig_bb_min.y;
+    marker.scale.z = orig_bb_max.z - orig_bb_min.z;
+    marker.color.a = 0.5; // Don't forget to set the alpha!
+    marker.color.r = 1.0;
+    marker.color.g = 0.5;
+    marker.color.b = 0.0;
+    bb_pub.publish(marker);
+  }
 
   void pcClbk(const sensor_msgs::PointCloud2ConstPtr &msg)
   {
@@ -114,11 +155,17 @@ public:
     pcl_conversions::fromPCL(coefficients, ros_coefficients);
     coeff_pub.publish(ros_coefficients);
 
-    pcl::ExtractIndices<pcl::PointXYZ> extract;
-    extract.setInputCloud(cloud);
-    extract.setIndices(inliers);
-    extract.setNegative(true);
-    extract.filter(*cloud);
+    // pcl::ExtractIndices<pcl::PointXYZ> extract;
+    // extract.setInputCloud(cloud);
+    // extract.setIndices(inliers);
+    // extract.setNegative(true);
+    // extract.filter(*cloud);
+
+    pass.setInputCloud(cloud);
+    pass.setFilterFieldName("z");
+    pass.setFilterLimits(-0.5, 0.735);
+    pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
+    pass.filter(*cloud);
 
     // PointCloud::Ptr cloud_tabletop(new PointCloud());
     // pcl::ExtractIndices<pcl::PointXYZ> extract;
@@ -132,7 +179,8 @@ public:
     // pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
     // pass.filter(*cloud);
     // std::cout << "Removed notch" << std::endl;
-
+    orig_observed = *cloud;
+    orig_observed_set = true;
     sensor_msgs::PointCloud2 output;
     pcl::toROSMsg(*cloud, output);
     object_pub.publish(output);
@@ -189,7 +237,6 @@ public:
     // occ_pub.publish(*msg_transformed2);
 
     // ////// occlusion end
-
 
     // // pcl::PointCloud<pcl::PointXYZHSV>::Ptr hsv_cloud(new pcl::PointCloud<pcl::PointXYZHSV>);
 
@@ -249,29 +296,29 @@ public:
     // pcl::toROSMsg(*colored_cloud, cloud_by_color_sm);
     // cf_pub.publish(cloud_by_color_sm);
 
-    if (coefficients.values.size() > 0)
-    {
-      visualization_msgs::Marker marker;
-      marker.header.frame_id = "world";
-      marker.header.stamp = ros::Time();
-      marker.type = visualization_msgs::Marker::CUBE;
-      marker.action = visualization_msgs::Marker::ADD;
-      marker.pose.position.x = 0.5f * (max.x + min.x);
-      marker.pose.position.y = 0.5f * (max.y + min.y);
-      marker.pose.position.z = 0.5f * (max.z - coefficients.values[3]);
-      marker.pose.orientation.x = 0.0;
-      marker.pose.orientation.y = 0.0;
-      marker.pose.orientation.z = 0.0;
-      marker.pose.orientation.w = 1.0;
-      marker.scale.x = max.x - min.x;
-      marker.scale.y = max.y - min.y;
-      marker.scale.z = max.z + coefficients.values[3];
-      marker.color.a = 0.5; // Don't forget to set the alpha!
-      marker.color.r = 1.0;
-      marker.color.g = 0.5;
-      marker.color.b = 0.0;
-      bb_pub.publish(marker);
-    }
+    // if (coefficients.values.size() > 0)
+    // {
+    //   visualization_msgs::Marker marker;
+    //   marker.header.frame_id = "world";
+    //   marker.header.stamp = ros::Time();
+    //   marker.type = visualization_msgs::Marker::CUBE;
+    //   marker.action = visualization_msgs::Marker::ADD;
+    //   marker.pose.position.x = 0.5f * (max.x + min.x);
+    //   marker.pose.position.y = 0.5f * (max.y + min.y);
+    //   marker.pose.position.z = 0.5f * (max.z - coefficients.values[3]);
+    //   marker.pose.orientation.x = 0.0;
+    //   marker.pose.orientation.y = 0.0;
+    //   marker.pose.orientation.z = 0.0;
+    //   marker.pose.orientation.w = 1.0;
+    //   marker.scale.x = max.x - min.x;
+    //   marker.scale.y = max.y - min.y;
+    //   marker.scale.z = max.z + coefficients.values[3];
+    //   marker.color.a = 0.5; // Don't forget to set the alpha!
+    //   marker.color.r = 1.0;
+    //   marker.color.g = 0.5;
+    //   marker.color.b = 0.0;
+    //   bb_pub.publish(marker);
+    // }
   }
 
   void occClbk(const sensor_msgs::PointCloud2ConstPtr &cloud_msg)
@@ -362,6 +409,8 @@ public:
     pass.setFilterLimits(-0.5, 0.73);
     pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
     pass.filter(*cloud_occluded);
+    orig_unobserved = *cloud_occluded;
+    orig_unobserved_set = true;
 
     pcl::toPCLPointCloud2(*cloud_occluded, cloud_filtered2);
 
@@ -415,6 +464,7 @@ int main(int argc, char **argv)
   GraspedReconstruction gr(n);
   while (ros::ok())
   {
+    gr.make_combo();
     ros::spinOnce();
     loop_rate.sleep();
   }
