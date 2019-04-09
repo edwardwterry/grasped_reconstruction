@@ -1,7 +1,7 @@
 #include <grasped_reconstruction/grasped_reconstruction.h>
 
 const float PI_F = 3.14159265358979f;
-typedef pcl::PointCloud<pcl::PointXYZ> PointCloud;
+typedef pcl::PointCloud<pcl::PointXYZRGB> PointCloud;
 class GraspedReconstruction
 {
 public:
@@ -20,6 +20,7 @@ public:
     object_pub = n.advertise<sensor_msgs::PointCloud2>("segmented_object", 1);
     tabletop_pub = n.advertise<sensor_msgs::PointCloud2>("tabletop", 1);
     bb_pub = n.advertise<visualization_msgs::Marker>("bbox", 1);
+    cf_pub = n.advertise<sensor_msgs::PointCloud2>("color_filtered", 1);
     image_transport::ImageTransport it(n);
     hm_im_pub = it.advertise("height_map_image", 1);
     try
@@ -38,7 +39,7 @@ public:
   }
   ros::NodeHandle _n;
   ros::Subscriber pc_sub, gm_sub;
-  ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub;
+  ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub;
   image_transport::Publisher hm_im_pub;
   tf::TransformListener listener;
   tf::StampedTransform world_T_lens_link_tf;
@@ -56,7 +57,7 @@ public:
 
     // remove the ground plane
     // http://pointclouds.org/documentation/tutorials/passthrough.php
-    pcl::PassThrough<pcl::PointXYZ> pass;
+    pcl::PassThrough<pcl::PointXYZRGB> pass;
     pass.setInputCloud(cloud);
     pass.setFilterFieldName("z");
     pass.setFilterLimits(-0.5, 0.5);
@@ -75,7 +76,7 @@ public:
     std::cout << "Removed floor" << std::endl;
 
     // Downsample this pc
-    pcl::VoxelGrid<pcl::PointXYZ> downsample;
+    pcl::VoxelGrid<pcl::PointXYZRGB> downsample;
     downsample.setInputCloud(cloud);
     downsample.setLeafSize(0.01f, 0.01f, 0.01f);
     downsample.filter(*cloud);
@@ -87,7 +88,7 @@ public:
     pcl::ModelCoefficients coefficients;
     pcl::PointIndices::Ptr inliers(new pcl::PointIndices());
     // Create the segmentation object
-    pcl::SACSegmentation<pcl::PointXYZ> seg;
+    pcl::SACSegmentation<pcl::PointXYZRGB> seg;
     // Optional
     seg.setOptimizeCoefficients(true);
     // Mandatory
@@ -104,14 +105,14 @@ public:
     pcl_conversions::fromPCL(coefficients, ros_coefficients);
     coeff_pub.publish(ros_coefficients);
 
-    pcl::ExtractIndices<pcl::PointXYZ> extract;
+    pcl::ExtractIndices<pcl::PointXYZRGB> extract;
     extract.setInputCloud(cloud);
     extract.setIndices(inliers);
     extract.setNegative(true);
     extract.filter(*cloud);
 
     // PointCloud::Ptr cloud_tabletop(new PointCloud());
-    // pcl::ExtractIndices<pcl::PointXYZ> extract;
+    // pcl::ExtractIndices<pcl::PointXYZRGB> extract;
     // extract.setInputCloud(cloud);
     // extract.setIndices(inliers);
     // extract.setNegative(false);
@@ -128,9 +129,42 @@ public:
     object_pub.publish(output);
     std::cout << "Published cloud" << std::endl;
 
-    pcl::PointXYZ min, max;
+    pcl::PointXYZRGB min, max;
     pcl::getMinMax3D(*cloud, min, max);
     std::cout << "Got bounding box" << std::endl;
+
+    // pcl::PointCloud<pcl::PointXYZHSV>::Ptr hsv_cloud(new pcl::PointCloud<pcl::PointXYZHSV>);
+
+    // pcl::PointCloudXYZRGBtoXYZHSV(*cloud, *hsv_cloud);
+    // http://www.pcl-users.org/How-to-filter-based-on-color-using-PCL-td2791524.html
+    // Filter for color
+    // build the condition
+    int rMax = 200;
+    int rMin = 280;
+    int gMax = 1;
+    int gMin = 0;
+    int bMax = 1;
+    int bMin = 0;
+    pcl::ConditionAnd<pcl::PointXYZRGB>::Ptr color_cond(new pcl::ConditionAnd<pcl::PointXYZRGB>());
+    color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("h", pcl::ComparisonOps::LT, rMax)));
+    color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("h", pcl::ComparisonOps::GT, rMin)));
+    color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("s", pcl::ComparisonOps::LT, gMax)));
+    color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("s", pcl::ComparisonOps::GT, gMin)));
+    color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("i", pcl::ComparisonOps::LT, bMax)));
+    color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("i", pcl::ComparisonOps::GT, bMin)));
+
+    // build the filter
+    pcl::ConditionalRemoval<pcl::PointXYZRGB> condrem;
+    condrem.setCondition(color_cond);
+    condrem.setInputCloud(cloud);
+    condrem.setKeepOrganized(false);
+
+    // apply filter
+    // condrem.filter(*hsv_cloud);
+    // pcl::PointCloudXYZHSVtoXYZRGB(*hsv_cloud, *cloud);
+    sensor_msgs::PointCloud2 cloud_by_color_sm;
+    pcl::toROSMsg(*cloud, cloud_by_color_sm);
+    cf_pub.publish(cloud_by_color_sm);
 
     if (coefficients.values.size() > 0)
     {

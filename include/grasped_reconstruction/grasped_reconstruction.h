@@ -27,10 +27,12 @@
 #include <pcl/ModelCoefficients.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
+#include <pcl/point_types_conversion.h>
 #include <pcl/sample_consensus/method_types.h>
 #include <pcl/sample_consensus/model_types.h>
 #include <pcl/segmentation/sac_segmentation.h>
 #include <pcl/filters/extract_indices.h>
+#include <pcl/filters/conditional_removal.h>
 #include <pcl_ros/transforms.h>
 #include <grid_map_ros/GridMapRosConverter.hpp>
 // #include <sensor_msgs/PointCloud2.h>
