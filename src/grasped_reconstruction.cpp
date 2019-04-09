@@ -53,6 +53,7 @@ public:
   tf::StampedTransform world_T_lens_link_tf;
   int rMax, rMin, gMax, gMin, bMax, bMin;
 
+
   void pcClbk(const sensor_msgs::PointCloud2ConstPtr &msg)
   {
     std::cout << "Received pc message" << std::endl;
@@ -231,9 +232,12 @@ public:
     std::cout << "Received pc message" << std::endl;
     // http://wiki.ros.org/pcl/Tutorials#pcl.2BAC8-Tutorials.2BAC8-hydro.sensor_msgs.2BAC8-PointCloud2
     // Convert the sensor_msgs/PointCloud2 data to pcl/PointCloud
-
+    sensor_msgs::PointCloud2Ptr msg_transformed(new sensor_msgs::PointCloud2());
+    std::string target_frame("world");
+    std::string lens_frame("lens_link");
+    pcl_ros::transformPointCloud(target_frame, *cloud_msg, *msg_transformed, listener);
     PointCloud::Ptr cloud(new PointCloud());
-    pcl::fromROSMsg(*cloud_msg, *cloud);
+    pcl::fromROSMsg(*msg_transformed, *cloud);
 
     // remove the ground plane
     // http://pointclouds.org/documentation/tutorials/passthrough.php
@@ -273,6 +277,7 @@ public:
     // PointCloud::Ptr pcPtr(pc);
 
     // pcl::fromPCLPointCloud2(*cloud, *pc);
+    pcl_ros::transformPointCloud(lens_frame, *cloud, *cloud, listener);
 
     pcl::VoxelGridOcclusionEstimation<pcl::PointXYZ> occ;
 
@@ -303,16 +308,16 @@ public:
     sensor_msgs::PointCloud2Ptr output(new sensor_msgs::PointCloud2());
 
     pcl_conversions::fromPCL(cloud_filtered2, *output);
-    output->header.frame_id = "lens_link";
-    sensor_msgs::PointCloud2Ptr msg_transformed(new sensor_msgs::PointCloud2());
-    std::string target_frame("world");
-    pcl_ros::transformPointCloud(target_frame, *output, *msg_transformed, listener);
-    msg_transformed->header.frame_id = "world";
+    output->header.frame_id = std::string("lens_link");
+    sensor_msgs::PointCloud2Ptr msg_transformed2(new sensor_msgs::PointCloud2());
+    std::string target_frame2("world");
+    pcl_ros::transformPointCloud(target_frame2, *output, *msg_transformed2, listener);
+    msg_transformed2->header.frame_id = "world";
     // output.height = 640;
     // output.width = 480;
 
     // Publish the data
-    occ_pub.publish(*msg_transformed);
+    occ_pub.publish(*msg_transformed2);
   }
 
   void gmClbk(const grid_map_msgs::GridMap::ConstPtr &msg)
