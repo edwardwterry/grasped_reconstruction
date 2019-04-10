@@ -71,6 +71,57 @@ public:
       sor.setStddevMulThresh(1.0);
       sor.filter(*cl);
       pcl::getMinMax3D(*cl, orig_bb_min, orig_bb_max);
+      pcl::VoxelGrid<pcl::PointXYZ> vg;
+      vg.setInputCloud(cl); // will this go out of scope!?!??!
+      vg.setLeafSize(0.01, 0.01, 0.01);
+      vg.filter(*cl);
+      // http://pointclouds.org/documentation/tutorials/kdtree_search.php
+      pcl::KdTreeFLANN<pcl::PointXYZ> kdtree_obs;
+      PointCloud::Ptr cl_orig_obs(new PointCloud);
+      *cl_orig_obs = orig_observed;
+      kdtree_obs.setInputCloud(cl_orig_obs);
+      std::cout<<"\n\nLooking for associations in observed pc"<<std::endl;
+      for (PointCloud::iterator it = cl->begin(); it != cl->end(); it++) // for each in the combined cloud
+      {
+        std::cout<<"Querying point: "<<*it<<std::endl;
+        int K = 1; // only look for the closest
+        std::vector<int> pointIdxNKNSearch;
+        pointIdxNKNSearch.resize(K);
+        std::vector<float> pointNKNSquaredDistance;
+        pointNKNSquaredDistance.resize(K);
+        if (kdtree_obs.nearestKSearch(*it, K, pointIdxNKNSearch, pointNKNSquaredDistance) > 0) // search in the observed tree
+        {
+          for (size_t i = 0; i < pointIdxNKNSearch.size(); ++i)
+            std::cout << "    " << cl_orig_obs->points[pointIdxNKNSearch[i]].x
+                      << " " << cl_orig_obs->points[pointIdxNKNSearch[i]].y
+                      << " " << cl_orig_obs->points[pointIdxNKNSearch[i]].z
+                      << " (squared distance: " << pointNKNSquaredDistance[i] << ")" << std::endl;
+        }
+      }
+      std::cout<<"\n\nLooking for associations in unobserved pc"<<std::endl;
+
+      pcl::KdTreeFLANN<pcl::PointXYZ> kdtree_unobs;
+      PointCloud::Ptr cl_orig_unobs(new PointCloud);
+      *cl_orig_unobs = orig_unobserved;
+      kdtree_unobs.setInputCloud(cl_orig_unobs);
+      for (PointCloud::iterator it = cl->begin(); it != cl->end(); it++) // for each in the combined cloud
+      {
+        std::cout<<"Querying point: "<<*it<<std::endl;
+        int K = 3; // only look for the closest
+        std::vector<int> pointIdxNKNSearch;
+        pointIdxNKNSearch.resize(K);
+        std::vector<float> pointNKNSquaredDistance;
+        pointNKNSquaredDistance.resize(K);
+        if (kdtree_unobs.nearestKSearch(*it, K, pointIdxNKNSearch, pointNKNSquaredDistance) > 0) // search in the observed tree
+        {
+          for (size_t i = 0; i < pointIdxNKNSearch.size(); ++i)
+            std::cout << "    " << cl_orig_unobs->points[pointIdxNKNSearch[i]].x
+                      << " " << cl_orig_unobs->points[pointIdxNKNSearch[i]].y
+                      << " " << cl_orig_unobs->points[pointIdxNKNSearch[i]].z
+                      << " (squared distance: " << pointNKNSquaredDistance[i] << ")" << std::endl;
+        }
+      }
+      orig_observed_set = false;
     }
     visualization_msgs::Marker marker;
     marker.header.frame_id = "world";
@@ -135,25 +186,28 @@ public:
     pcl::toROSMsg(*cloud, tabletop_output);
     tabletop_pub.publish(tabletop_output);
 
-    pcl::ModelCoefficients coefficients;
-    pcl::PointIndices::Ptr inliers(new pcl::PointIndices());
-    // Create the segmentation object
-    pcl::SACSegmentation<pcl::PointXYZ> seg;
-    // Optional
-    seg.setOptimizeCoefficients(true);
-    // Mandatory
-    seg.setModelType(pcl::SACMODEL_PLANE);
-    seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setDistanceThreshold(0.01);
-    // remove the tabletop
-    seg.setInputCloud(cloud);
-    seg.segment(*inliers, coefficients);
-    std::cout << "Removed tabletop" << std::endl;
+    // // obsolete --> coefficients for plane segmentation
+    // pcl::ModelCoefficients coefficients;
+    // pcl::PointIndices::Ptr inliers(new pcl::PointIndices());
+    // // Create the segmentation object
+    // pcl::SACSegmentation<pcl::PointXYZ> seg;
+    // // Optional
+    // seg.setOptimizeCoefficients(true);
+    // // Mandatory
+    // seg.setModelType(pcl::SACMODEL_PLANE);
+    // seg.setMethodType(pcl::SAC_RANSAC);
+    // seg.setDistanceThreshold(0.01);
+    // // remove the tabletop
+    // seg.setInputCloud(cloud);
+    // seg.segment(*inliers, coefficients);
+    // std::cout << "Removed tabletop" << std::endl;
 
-    // Publish the model coefficients
-    pcl_msgs::ModelCoefficients ros_coefficients;
-    pcl_conversions::fromPCL(coefficients, ros_coefficients);
-    coeff_pub.publish(ros_coefficients);
+    // // Publish the model coefficients
+    // pcl_msgs::ModelCoefficients ros_coefficients;
+    // pcl_conversions::fromPCL(coefficients, ros_coefficients);
+    // coeff_pub.publish(ros_coefficients);
+
+    // // end obsolete
 
     // pcl::ExtractIndices<pcl::PointXYZ> extract;
     // extract.setInputCloud(cloud);
