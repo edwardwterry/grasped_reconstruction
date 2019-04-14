@@ -84,74 +84,21 @@ public:
       IndexedPointsWithProb ipp;
       appendAndIncludePointCloudProb(orig_observed, 1.0f, ipp);
       appendAndIncludePointCloudProb(orig_unobserved, 1.0f, ipp);
-      // combo_orig = orig_observed;
-      // combo_orig += orig_unobserved;
 
+      for (auto it = ipp.begin(); it != ipp.end(); it++)
+      {
+        std::cout << "Point #: " << it->first << " Coord: " << it->second.first.x << " " << it->second.first.y << " " << it->second.first.z << " Prob: " << it->second.second << std::endl;
+      }
       //publish
       sensor_msgs::PointCloud2 out;
       pcl::toROSMsg(*cl, out);
       combo_pub.publish(out);
-      std::cout<<"Publishing the combined observed and unobserved point cloud"<<std::endl;
+      std::cout << "Publishing the combined observed and unobserved point cloud" << std::endl;
 
-      /*{ // kd tree nn search
-        // http://pointclouds.org/documentation/tutorials/kdtree_search.php
-        pcl::KdTreeFLANN<pcl::PointXYZ> kdtree_obs;
-        PointCloud::Ptr cl_orig_obs(new PointCloud);
-        *cl_orig_obs = orig_observed;
-        kdtree_obs.setInputCloud(cl_orig_obs);
-        std::cout << "\n\nLooking for associations in observed pc" << std::endl;
-        for (PointCloud::iterator it = cl->begin(); it != cl->end(); it++) // for each in the combined cloud
-        {
-          std::cout << "Querying point: " << *it << std::endl;
-          int K = 1; // only look for the closest
-          std::vector<int> pointIdxNKNSearch;
-          pointIdxNKNSearch.resize(K);
-          std::vector<float> pointNKNSquaredDistance;
-          pointNKNSquaredDistance.resize(K);
-          if (kdtree_obs.nearestKSearch(*it, K, pointIdxNKNSearch, pointNKNSquaredDistance) > 0) // search in the observed tree
-          {
-            for (size_t i = 0; i < pointIdxNKNSearch.size(); ++i)
-              std::cout << "    " << cl_orig_obs->points[pointIdxNKNSearch[i]].x
-                        << " " << cl_orig_obs->points[pointIdxNKNSearch[i]].y
-                        << " " << cl_orig_obs->points[pointIdxNKNSearch[i]].z
-                        << " (squared distance: " << pointNKNSquaredDistance[i] << ")" << std::endl;
-          }
-        }
-        std::cout << "\n\nLooking for associations in unobserved pc" << std::endl;
-
-        pcl::KdTreeFLANN<pcl::PointXYZ> kdtree_unobs;
-        PointCloud::Ptr cl_orig_unobs(new PointCloud);
-        *cl_orig_unobs = orig_unobserved;
-        kdtree_unobs.setInputCloud(cl_orig_unobs);
-        for (PointCloud::iterator it = cl->begin(); it != cl->end(); it++) // for each in the combined cloud
-        {
-          std::cout << "Querying point: " << *it << std::endl;
-          int K = 3; // only look for the closest
-          std::vector<int> pointIdxNKNSearch;
-          pointIdxNKNSearch.resize(K);
-          std::vector<float> pointNKNSquaredDistance;
-          pointNKNSquaredDistance.resize(K);
-          if (kdtree_unobs.nearestKSearch(*it, K, pointIdxNKNSearch, pointNKNSquaredDistance) > 0) // search in the observed tree
-          {
-            for (size_t i = 0; i < pointIdxNKNSearch.size(); ++i)
-              std::cout << "    " << cl_orig_unobs->points[pointIdxNKNSearch[i]].x
-                        << " " << cl_orig_unobs->points[pointIdxNKNSearch[i]].y
-                        << " " << cl_orig_unobs->points[pointIdxNKNSearch[i]].z
-                        << " (squared distance: " << pointNKNSquaredDistance[i] << ")" << std::endl;
-          }
-        }
-      } */
       publishBoundingBoxMarker();
       calculateNextBestView(ipp);
       combo_made = true;
     }
-
-    // _n.setParam("orig_bb_min/x", orig_bb_min_.x);
-    // _n.setParam("orig_bb_min/y", orig_bb_min_.y);
-    // _n.setParam("orig_bb_min/z", orig_bb_min_.z);
-    // _n.setParam("orig_bb_max/x", orig_bb_max_.x);
-    // _n.setParam("orig_bb_max/y", orig_bb_max_.y);
-    // _n.setParam("orig_bb_max/z", orig_bb_max_.z);
   }
 
   void publishBoundingBoxMarker()
@@ -176,7 +123,7 @@ public:
     marker.color.g = 0.5;
     marker.color.b = 0.0;
     bb_pub.publish(marker);
-    std::cout<<"Published bounding box marker!"<<std::endl;
+    std::cout << "Published bounding box marker!" << std::endl;
   }
 
   void pcClbk(const sensor_msgs::PointCloud2ConstPtr &msg)
@@ -356,35 +303,34 @@ public:
 
   void divideBoundingBoxIntoVoxels()
   {
+    std::cout << "Beginning to divide bounding box into voxels!" << std::endl;
+    leaf_size_.resize(3);
     // row
-    nr_ = floor((orig_bb_max_.x - orig_bb_min_.x) / leaf_size_[0]);
+    nr_ = floor((orig_bb_max_.x - orig_bb_min_.x) / LEAF_SIZE);
     leaf_size_[0] = (orig_bb_max_.x - orig_bb_min_.x) / nr_;
     // col
-    nc_ = floor((orig_bb_max_.y - orig_bb_min_.y) / leaf_size_[1]);
+    nc_ = floor((orig_bb_max_.y - orig_bb_min_.y) / LEAF_SIZE);
     leaf_size_[1] = (orig_bb_max_.y - orig_bb_min_.y) / nc_;
     // level
-    nl_ = floor((orig_bb_max_.z - orig_bb_min_.z) / leaf_size_[2]);
+    nl_ = floor((orig_bb_max_.z - orig_bb_min_.z) / LEAF_SIZE);
     leaf_size_[2] = (orig_bb_max_.z - orig_bb_min_.z) / nl_;
     std::cout << "Divided bounding box into voxels!" << std::endl;
     std::cout << "nr_: " << nr_ << " nc_: " << nc_ << " nl_: " << nl_ << std::endl;
   }
 
-  void appendAndIncludePointCloudProb(const PointCloud &new_cloud, const float prob, IndexedPointsWithProb& ipp)
+  void appendAndIncludePointCloudProb(const PointCloud &new_cloud, const float prob, IndexedPointsWithProb &ipp)
   {
-    IndexedPointsWithProb ipp;
-    int index = parent_cloud.width;
+    int index = ipp.size();
     for (auto it = new_cloud.begin(); it != new_cloud.end(); it++, index++)
     {
       ipp.insert(std::make_pair(index, std::make_pair(*it, prob))); // assumes uniform probability for a batch of points
     }
-    parent_cloud += new_cloud;
     std::cout << "Appended and included point cloud with probabilities!" << std::endl;
-    return ipp;
   }
 
   Eigen::Vector4f calculateNextBestView(const IndexedPointsWithProb &ipp)
   {
-    std::cout<<"Beginning calculation of next best view!"<<std::endl;
+    std::cout << "Beginning calculation of next best view!" << std::endl;
     std::vector<float> view_entropy;
     std::vector<Eigen::Vector4f> views;
     Eigen::Vector4f best_view;
@@ -416,6 +362,7 @@ public:
       Eigen::Vector3i grid_coord = worldCoordToGridCoord(it->second.first.x, it->second.first.y, it->second.first.z);
       // convert this to an index
       int index = gridCoordToVoxelIndex(grid_coord);
+      std::cout << "Point #: " << it->first << " Grid Coord: " << grid_coord[0] << " " << grid_coord[1] << " " << grid_coord[2] << " Index: " << index << std::endl;
       // see whether it's in the map, add if it isn't
       auto it_prob = cell_occupancy_prob.find(index);
       float prob = it->second.second;
@@ -683,17 +630,20 @@ public:
     float el_max = M_PI;
     float az_incr = (az_max - az_min) / NUM_AZIMUTH_POINTS;
     float el_incr = (el_max - el_min) / NUM_ELEVATION_POINTS;
+    std::cout << "az_incr: " << az_incr << " el_incr: " << el_incr << std::endl;
+
     for (float az = az_min; az < az_max; az += az_incr)
     {
-      for (float el = el; el < el_max; el += el_incr)
+      for (float el = el_min; el < el_max; el += el_incr)
       {
+        std::cout << "az: " << az << " el: " << el << std::endl;
         Eigen::Vector4f v;
         v[0] = VIEW_RADIUS * cos(az);
         v[1] = VIEW_RADIUS * sin(az);
         v[2] = VIEW_RADIUS * sin(el);
         v[3] = 0.0f;
         views.push_back(v);
-        std::cout << "Origin: " << v[0] << " " << v[1] << " " << v[2] << std::endl;
+        std::cout << "Candidate origin: " << v[0] << " " << v[1] << " " << v[2] << std::endl;
       }
     }
   }
