@@ -49,7 +49,7 @@ public:
   ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub;
   image_transport::Publisher hm_im_pub;
   tf::TransformListener listener;
-  tf::StampedTransform world_T_lens_link_tf;
+  tf::StampedTransform world_T_lens_link_tf, world_T_object_tf;
   int rMax, rMin, gMax, gMin, bMax, bMin;
   PointCloud combo_orig, orig_observed, orig_unobserved;
   bool orig_observed_set = false;
@@ -68,7 +68,7 @@ public:
 
   void make_combo()
   {
-    std::cout << orig_observed_set << orig_unobserved_set << combo_made << std::endl;
+    // std::cout << orig_observed_set << orig_unobserved_set << combo_made << std::endl;
     if (orig_observed_set && orig_unobserved_set && !combo_made)
     {
       PointCloud::Ptr cl(new PointCloud);
@@ -78,17 +78,47 @@ public:
       sor.setMeanK(50);
       sor.setStddevMulThresh(1.0);
       sor.filter(*cl);
+      pcl::PointXYZ orig_bb_obs_min, orig_bb_obs_max;
+      pcl::getMinMax3D(*cl, orig_bb_obs_min, orig_bb_obs_max);
       *cl = orig_unobserved;
       sor.filter(*cl);
+      pcl::PointXYZ orig_bb_unobs_min, orig_bb_unobs_max;
+      pcl::getMinMax3D(*cl, orig_bb_unobs_min, orig_bb_unobs_max);
+
+      orig_bb_min_.x = std::min(orig_bb_unobs_min.x, orig_bb_obs_min.x);
+      orig_bb_min_.y = std::min(orig_bb_unobs_min.y, orig_bb_obs_min.y);
+      orig_bb_min_.z = std::min(orig_bb_unobs_min.z, orig_bb_obs_min.z);
+
+      orig_bb_max_.x = std::max(orig_bb_unobs_max.x, orig_bb_unobs_max.x);
+      orig_bb_max_.y = std::max(orig_bb_unobs_max.y, orig_bb_unobs_max.y);
+      orig_bb_max_.z = std::max(orig_bb_unobs_max.z, orig_bb_unobs_max.z);
+
+      std::cout << "Got bounding box" << std::endl;
 
       IndexedPointsWithProb ipp;
       appendAndIncludePointCloudProb(orig_observed, 1.0f, ipp);
-      appendAndIncludePointCloudProb(orig_unobserved, 1.0f, ipp);
-
+      appendAndIncludePointCloudProb(orig_unobserved, 0.5f, ipp);
       for (auto it = ipp.begin(); it != ipp.end(); it++)
       {
         std::cout << "Point #: " << it->first << " Coord: " << it->second.first.x << " " << it->second.first.y << " " << it->second.first.z << " Prob: " << it->second.second << std::endl;
       }
+      try
+      {
+        ros::Time now = ros::Time::now();
+        listener.waitForTransform("/world", "/cube1",
+                                  now, ros::Duration(3.0));
+        listener.lookupTransform("/world", "/cube1",
+                                 now, world_T_object_tf);
+      }
+      catch (tf::TransformException ex)
+      {
+        ROS_ERROR("%s", ex.what());
+      }
+      std::cout << "world to object transform received" << std::endl;
+
+      std::cout << "Bounding box min: " << orig_bb_min_.x << " " << orig_bb_min_.y << " " << orig_bb_min_.z << std::endl;
+      std::cout << "Bounding box max: " << orig_bb_max_.x << " " << orig_bb_max_.y << " " << orig_bb_max_.z << std::endl;
+
       //publish
       sensor_msgs::PointCloud2 out;
       pcl::toROSMsg(*cl, out);
@@ -182,10 +212,6 @@ public:
       pcl::toROSMsg(*cloud, output);
       object_pub.publish(output);
       std::cout << "Published object with table removed" << std::endl;
-
-      pcl::PointXYZ min, max;
-      pcl::getMinMax3D(*cloud, orig_bb_min_, orig_bb_max_);
-      std::cout << "Got bounding box" << std::endl;
     }
   }
 
@@ -362,7 +388,7 @@ public:
       Eigen::Vector3i grid_coord = worldCoordToGridCoord(it->second.first.x, it->second.first.y, it->second.first.z);
       // convert this to an index
       int index = gridCoordToVoxelIndex(grid_coord);
-      std::cout << "Point #: " << it->first << " Grid Coord: " << grid_coord[0] << " " << grid_coord[1] << " " << grid_coord[2] << " Index: " << index << std::endl;
+      // std::cout << "Point #: " << it->first << " Grid Coord: " << grid_coord[0] << " " << grid_coord[1] << " " << grid_coord[2] << " Index: " << index << std::endl;
       // see whether it's in the map, add if it isn't
       auto it_prob = cell_occupancy_prob.find(index);
       float prob = it->second.second;
@@ -385,7 +411,8 @@ public:
       Eigen::Vector4f direction;
       direction << it->second.first.x - origin[0], it->second.first.y - origin[1], it->second.first.z - origin[2], 0.0f;
       direction.normalize();
-      rayTraversal(out_ray, target_voxel, origin, direction);
+      std::cout << "Direction: " << direction.matrix() << " Target Voxel: " << target_voxel << std::endl;
+      rayTraversal(out_ray, target_voxel, origin, -direction);
       for (size_t i = 0; i < out_ray.size(); i++) // for each voxel the ray passed through
       {
         int index = gridCoordToVoxelIndex(out_ray[i]);
@@ -451,9 +478,11 @@ public:
   Eigen::Vector4f gridCoordToWorldCoord(const Eigen::Vector3i &grid_coord)
   {
     Eigen::Vector4f v;
-    v[0] = (grid_coord(0) + 0.5f) * leaf_size_[0];
-    v[1] = (grid_coord(1) + 0.5f) * leaf_size_[1];
-    v[2] = (grid_coord(2) + 0.5f) * leaf_size_[2];
+    v[0] = (grid_coord(0) + 0.5f) * leaf_size_[0] + world_T_object_tf.getOrigin().getX();
+    v[1] = (grid_coord(1) + 0.5f) * leaf_size_[1] + world_T_object_tf.getOrigin().getY();
+    v[2] = (grid_coord(2) + 0.5f) * leaf_size_[2] + world_T_object_tf.getOrigin().getZ();
+    v[3] = 0.0f;
+    // std::cout << "grid coord: " << grid_coord.matrix() << " world coord:" << v.matrix() << std::endl;
     return v;
   }
 
@@ -586,7 +615,7 @@ public:
 
     if ((tmin > tymax) || (tymin > tmax))
     {
-      PCL_ERROR("no intersection with the bounding box \n");
+      // PCL_ERROR("no intersection with the bounding box \n");
       tmin = -1.0f;
       return tmin;
     }
@@ -609,7 +638,7 @@ public:
 
     if ((tmin > tzmax) || (tzmin > tmax))
     {
-      PCL_ERROR("no intersection with the bounding box \n");
+      // PCL_ERROR("no intersection with the bounding box \n");
       tmin = -1.0f;
       return tmin;
     }
@@ -625,25 +654,25 @@ public:
   void generateViewCandidates(std::vector<Eigen::Vector4f> &views)
   {
     float az_min = 0.0f;
-    float az_max = 2 * M_PI;
-    float el_min = -M_PI;
-    float el_max = M_PI;
+    float az_max = 2.0f * M_PI;
+    float el_min = -M_PI / 2.0f;
+    float el_max = M_PI / 2.0f;
     float az_incr = (az_max - az_min) / NUM_AZIMUTH_POINTS;
     float el_incr = (el_max - el_min) / NUM_ELEVATION_POINTS;
-    std::cout << "az_incr: " << az_incr << " el_incr: " << el_incr << std::endl;
+    // std::cout << "az_incr: " << az_incr << " el_incr: " << el_incr << std::endl;
 
     for (float az = az_min; az < az_max; az += az_incr)
     {
       for (float el = el_min; el < el_max; el += el_incr)
       {
-        std::cout << "az: " << az << " el: " << el << std::endl;
+        // std::cout << "az: " << az << " el: " << el << std::endl;
         Eigen::Vector4f v;
-        v[0] = VIEW_RADIUS * cos(az);
-        v[1] = VIEW_RADIUS * sin(az);
-        v[2] = VIEW_RADIUS * sin(el);
+        v[0] = VIEW_RADIUS * cos(az) + world_T_object_tf.getOrigin().getX();
+        v[1] = VIEW_RADIUS * sin(az) + world_T_object_tf.getOrigin().getY();
+        v[2] = VIEW_RADIUS * sin(el) + world_T_object_tf.getOrigin().getZ();
         v[3] = 0.0f;
         views.push_back(v);
-        std::cout << "Candidate origin: " << v[0] << " " << v[1] << " " << v[2] << std::endl;
+        // std::cout << "Candidate origin: " << v[0] << " " << v[1] << " " << v[2] << std::endl;
       }
     }
   }
