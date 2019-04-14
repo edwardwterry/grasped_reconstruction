@@ -18,6 +18,7 @@ public:
     // ch_pub = n.advertise<pcl_msgs::PolygonMesh>("convex_hull_mesh", 1);
     // hm_pub = n.advertise<sensor_msgs::PointCloud2>("object_without_table", 1);
     coeff_pub = n.advertise<pcl_msgs::ModelCoefficients>("output", 1);
+    combo_pub = n.advertise<sensor_msgs::PointCloud2>("combo", 1);
     object_pub = n.advertise<sensor_msgs::PointCloud2>("segmented_object", 1);
     tabletop_pub = n.advertise<sensor_msgs::PointCloud2>("tabletop", 1);
     bb_pub = n.advertise<visualization_msgs::Marker>("bbox", 1);
@@ -47,7 +48,7 @@ public:
   }
   ros::NodeHandle _n;
   ros::Subscriber pc_sub, gm_sub, occ_sub;
-  ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub;
+  ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub;
   image_transport::Publisher hm_im_pub;
   tf::TransformListener listener;
   tf::StampedTransform world_T_lens_link_tf;
@@ -55,14 +56,29 @@ public:
   PointCloud combo_orig, orig_observed, orig_unobserved;
   bool orig_observed_set = false;
   bool orig_unobserved_set = false;
-  pcl::PointXYZ orig_bb_min, orig_bb_max;
+
+  // canonical bounding box
+  pcl::PointXYZ orig_bb_min_, orig_bb_max_;
+  std::vector<float> leaf_size_;
+  int nr_, nc_, nl_;
 
   void make_combo()
   {
     if (orig_observed_set && orig_unobserved_set)
     {
+      // std::cout << "orig_observed: " << std::endl;
+      // for (size_t i = 0; i < orig_observed.points.size(); ++i)
+      //   std::cout << "    " << orig_observed.points[i].x << " " << orig_observed.points[i].y << " " << orig_observed.points[i].z << std::endl;
+
+      // std::cout << "orig_unobserved: " << std::endl;
+      // for (size_t i = 0; i < orig_unobserved.points.size(); ++i)
+      //   std::cout << "    " << orig_unobserved.points[i].x << " " << orig_unobserved.points[i].y << " " << orig_unobserved.points[i].z << std::endl;
       combo_orig = orig_observed;
       combo_orig += orig_unobserved;
+
+      // std::cout << "combo_orig: " << std::endl;
+      // for (size_t i = 0; i < combo_orig.points.size(); ++i)
+      //   std::cout << "    " << combo_orig.points[i].x << " " << combo_orig.points[i].y << " " << combo_orig.points[i].z << std::endl;
       PointCloud::Ptr cl(new PointCloud);
       *cl = combo_orig;
       pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
@@ -70,20 +86,26 @@ public:
       sor.setMeanK(50);
       sor.setStddevMulThresh(1.0);
       sor.filter(*cl);
-      pcl::getMinMax3D(*cl, orig_bb_min, orig_bb_max);
-      pcl::VoxelGrid<pcl::PointXYZ> vg;
-      vg.setInputCloud(cl); // will this go out of scope!?!??!
-      vg.setLeafSize(0.01, 0.01, 0.01);
-      vg.filter(*cl);
+      // pcl::getMinMax3D(*cl, orig_bb_min_, orig_bb_max_);
+      // pcl::VoxelGrid<pcl::PointXYZ> vg;
+      // vg.setInputCloud(cl); // will this go out of scope!?!??!
+      // vg.setLeafSize(0.01, 0.01, 0.01);
+      // vg.filter(*cl);
+
+      //publish
+      sensor_msgs::PointCloud2 out;
+      pcl::toROSMsg(*cl, out);
+      combo_pub.publish(out);
+
       // http://pointclouds.org/documentation/tutorials/kdtree_search.php
       pcl::KdTreeFLANN<pcl::PointXYZ> kdtree_obs;
       PointCloud::Ptr cl_orig_obs(new PointCloud);
       *cl_orig_obs = orig_observed;
       kdtree_obs.setInputCloud(cl_orig_obs);
-      std::cout<<"\n\nLooking for associations in observed pc"<<std::endl;
+      std::cout << "\n\nLooking for associations in observed pc" << std::endl;
       for (PointCloud::iterator it = cl->begin(); it != cl->end(); it++) // for each in the combined cloud
       {
-        std::cout<<"Querying point: "<<*it<<std::endl;
+        std::cout << "Querying point: " << *it << std::endl;
         int K = 1; // only look for the closest
         std::vector<int> pointIdxNKNSearch;
         pointIdxNKNSearch.resize(K);
@@ -98,7 +120,7 @@ public:
                       << " (squared distance: " << pointNKNSquaredDistance[i] << ")" << std::endl;
         }
       }
-      std::cout<<"\n\nLooking for associations in unobserved pc"<<std::endl;
+      std::cout << "\n\nLooking for associations in unobserved pc" << std::endl;
 
       pcl::KdTreeFLANN<pcl::PointXYZ> kdtree_unobs;
       PointCloud::Ptr cl_orig_unobs(new PointCloud);
@@ -106,7 +128,7 @@ public:
       kdtree_unobs.setInputCloud(cl_orig_unobs);
       for (PointCloud::iterator it = cl->begin(); it != cl->end(); it++) // for each in the combined cloud
       {
-        std::cout<<"Querying point: "<<*it<<std::endl;
+        std::cout << "Querying point: " << *it << std::endl;
         int K = 3; // only look for the closest
         std::vector<int> pointIdxNKNSearch;
         pointIdxNKNSearch.resize(K);
@@ -128,16 +150,16 @@ public:
     marker.header.stamp = ros::Time();
     marker.type = visualization_msgs::Marker::CUBE;
     marker.action = visualization_msgs::Marker::ADD;
-    marker.pose.position.x = 0.5f * (orig_bb_max.x + orig_bb_min.x);
-    marker.pose.position.y = 0.5f * (orig_bb_max.y + orig_bb_min.y);
-    marker.pose.position.z = 0.5f * (orig_bb_max.z + orig_bb_min.z);
+    marker.pose.position.x = 0.5f * (orig_bb_max_.x + orig_bb_min_.x);
+    marker.pose.position.y = 0.5f * (orig_bb_max_.y + orig_bb_min_.y);
+    marker.pose.position.z = 0.5f * (orig_bb_max_.z + orig_bb_min_.z);
     marker.pose.orientation.x = 0.0;
     marker.pose.orientation.y = 0.0;
     marker.pose.orientation.z = 0.0;
     marker.pose.orientation.w = 1.0;
-    marker.scale.x = orig_bb_max.x - orig_bb_min.x;
-    marker.scale.y = orig_bb_max.y - orig_bb_min.y;
-    marker.scale.z = orig_bb_max.z - orig_bb_min.z;
+    marker.scale.x = orig_bb_max_.x - orig_bb_min_.x;
+    marker.scale.y = orig_bb_max_.y - orig_bb_min_.y;
+    marker.scale.z = orig_bb_max_.z - orig_bb_min_.z;
     marker.color.a = 0.5; // Don't forget to set the alpha!
     marker.color.r = 1.0;
     marker.color.g = 0.5;
@@ -506,6 +528,203 @@ public:
     ros_image.header.stamp = ros::Time::now();
     hm_im_pub.publish(ros_image);
     ROS_INFO("%s", "here5");
+  }
+
+  void divideBoundingBoxIntoVoxels()
+  {
+    // row
+    nr_ = floor((orig_bb_max_.x - orig_bb_min_.x) / leaf_size_[0]);
+    leaf_size_[0] = (orig_bb_max_.x - orig_bb_min_.x) / nr_;
+    // col
+    nc_ = floor((orig_bb_max_.y - orig_bb_min_.y) / leaf_size_[1]);
+    leaf_size_[1] = (orig_bb_max_.y - orig_bb_min_.y) / nc_;
+    // level
+    nl_ = floor((orig_bb_max_.z - orig_bb_min_.z) / leaf_size_[2]);
+    leaf_size_[2] = (orig_bb_max_.z - orig_bb_min_.z) / nl_;
+  }
+
+  float calculateViewEntropy(const Eigen::Vector4f &origin, const PointCloud &cloud)
+  {
+    std::unordered_map<int, float> cell_occupancy_prob;
+    for (PointCloud::iterator it = cloud.begin(); it != cloud.end(); it++)
+    {
+      // find out what grid coord it belongs in
+      Eigen::Vector3i grid_coord = worldCoordToGridCoord(it->x, it->y, it->z);
+      // convert this to an index
+      int index = gridCoordToVoxelIndex(grid_coord);
+      // see whether it's in the map, add if it isn't
+      auto it_prob = cell_occupancy_prob.find(index);
+      if (it_prob == cell_occupancy_prob.end()) // couldn't find it
+      {
+        cell_occupancy_prob.insert(std::make_pair<int, float>(index, prob)); // TODO include initial probability
+      }
+      else // found it
+      {
+        // float prob_current // TODO
+      }
+    }
+    std::unordered_set<int> cell_visited;
+    for (PointCloud::iterator it = cloud.begin(); it != cloud.end(); it++)
+    {
+      std::vector<Eigen::Vector3i> out_ray;
+      Eigen::Vector3i target_voxel = worldCoordToGridCoord(it->x, it->y, it->z);
+      Eigen::Vector4f direction;
+      direction << it->x - origin[0], it->y - origin[1], it->z - origin[2], 0.0f;
+      direction.normalize();
+      rayTraversal(out_ray, target_voxel, origin, direction, t_min); // TODO t_min
+      for (size_t i = 0; i < out_ray.size(); i++)
+      {
+        int index = gridCoordToVoxelIndex(out_ray[i]);
+        auto it_cell = cell_visited.find(index);
+        if (it_cell == cell_visited.end())
+        {
+          cell_visited.insert(index);
+        }
+      }
+    }
+  }
+
+  float calculateEntropyAlongRay(const std::vector<Eigen::Vector3i> &ray)
+  {
+    
+  }
+
+  Eigen::Vector3i worldCoordToGridCoord(const float x, const float y, const float z)
+  {
+    Eigen::Vector3i p;
+    int r, c, l;
+    r = (x - orig_bb_min_.x) / leaf_size_[0];
+    c = (y - orig_bb_min_.y) / leaf_size_[1];
+    l = (z - orig_bb_min_.z) / leaf_size_[2];
+    p << r, c, l;
+    return p;
+  }
+
+  int worldCoordToVoxelIndex(const Eigen::Vector4f &coord)
+  {
+    int index = gridCoordToVoxelIndex(worldCoordToGridCoord(coord[0], coord[1], coord[2]));
+    return index;
+  }
+
+  Eigen::Vector3i voxelIndexToGridCoord(const int index)
+  {
+    int r, c, l;
+    int temp;
+    l = floor(index / (nr_ * nc_));
+    temp = index % (nr_ * nc_);
+    c = temp % nc_;
+    r = floor(temp % nc_);
+    Eigen::Vector3i v;
+    v << r, c, l;
+    return v;
+  }
+
+  int gridCoordToVoxelIndex(const Eigen::Vector3i &coord)
+  {
+    return coord[2] * (nr_ * nc_) + coord[1] * nr_ + coord[0];
+  }
+
+  Eigen::Vector4f gridCoordToWorldCoord(const Eigen::Vector3i &grid_coord)
+  {
+    Eigen::Vector4f v;
+    v[0] = (grid_coord(0) + 0.5f) * leaf_size_[0];
+    v[1] = (grid_coord(1) + 0.5f) * leaf_size_[1];
+    v[2] = (grid_coord(2) + 0.5f) * leaf_size_[2];
+    return v;
+  }
+
+  Eigen::Vector4f voxelIndexToWorldCoord(const int index)
+  {
+    Eigen::Vector4f p = gridCoordToWorldCoord(voxelIndexToGridCoord(index));
+    return p;
+  }
+
+  void rayTraversal(std::vector<Eigen::Vector3i> &out_ray,
+                    const Eigen::Vector3i &target_voxel,
+                    const Eigen::Vector4f &origin,
+                    const Eigen::Vector4f &direction,
+                    const float t_min)
+  {
+    // coordinate of the boundary of the voxel grid
+    Eigen::Vector4f start = origin + t_min * direction;
+
+    // i,j,k coordinate of the voxel were the ray enters the voxel grid
+    Eigen::Vector3i ijk = worldCoordToGridCoord(start[0], start[1], start[2]);
+    //Eigen::Vector3i ijk = this->getGridCoordinates (start_x, start_y, start_z);
+
+    // steps in which direction we have to travel in the voxel grid
+    int step_x, step_y, step_z;
+
+    // centroid coordinate of the entry voxel
+    Eigen::Vector4f voxel_max = gridCoordToWorldCoord(ijk);
+
+    if (direction[0] >= 0)
+    {
+      voxel_max[0] += leaf_size_[0] * 0.5f;
+      step_x = 1;
+    }
+    else
+    {
+      voxel_max[0] -= leaf_size_[0] * 0.5f;
+      step_x = -1;
+    }
+    if (direction[1] >= 0)
+    {
+      voxel_max[1] += leaf_size_[1] * 0.5f;
+      step_y = 1;
+    }
+    else
+    {
+      voxel_max[1] -= leaf_size_[1] * 0.5f;
+      step_y = -1;
+    }
+    if (direction[2] >= 0)
+    {
+      voxel_max[2] += leaf_size_[2] * 0.5f;
+      step_z = 1;
+    }
+    else
+    {
+      voxel_max[2] -= leaf_size_[2] * 0.5f;
+      step_z = -1;
+    }
+
+    float t_max_x = t_min + (voxel_max[0] - start[0]) / direction[0];
+    float t_max_y = t_min + (voxel_max[1] - start[1]) / direction[1];
+    float t_max_z = t_min + (voxel_max[2] - start[2]) / direction[2];
+
+    float t_delta_x = leaf_size_[0] / static_cast<float>(fabs(direction[0]));
+    float t_delta_y = leaf_size_[1] / static_cast<float>(fabs(direction[1]));
+    float t_delta_z = leaf_size_[2] / static_cast<float>(fabs(direction[2]));
+
+    while ((ijk[0] < max_b_[0] + 1) && (ijk[0] >= min_b_[0]) &&
+           (ijk[1] < max_b_[1] + 1) && (ijk[1] >= min_b_[1]) &&
+           (ijk[2] < max_b_[2] + 1) && (ijk[2] >= min_b_[2]))
+    {
+      // add voxel to ray
+      out_ray.push_back(ijk);
+
+      // check if we reached target voxel
+      if (ijk[0] == target_voxel[0] && ijk[1] == target_voxel[1] && ijk[2] == target_voxel[2])
+        break;
+
+      // estimate next voxel
+      if (t_max_x <= t_max_y && t_max_x <= t_max_z)
+      {
+        t_max_x += t_delta_x;
+        ijk[0] += step_x;
+      }
+      else if (t_max_y <= t_max_z && t_max_y <= t_max_x)
+      {
+        t_max_y += t_delta_y;
+        ijk[1] += step_y;
+      }
+      else
+      {
+        t_max_z += t_delta_z;
+        ijk[2] += step_z;
+      }
+    }
   }
 };
 
