@@ -44,6 +44,7 @@
     <build_depend>grid_map_msgs</build_depend>
     <build_depend>image_transport</build_depend>
     <build_depend>grid_map_ros</build_depend>
+    <build_depend>pcl_ros</build_depend>
     <build_depend>gazebo_ros</build_depend>
     <build_depend>octomap</build_depend>
     <build_depend>grasp_execution_msgs</build_depend>
@@ -66,6 +67,7 @@
     <exec_depend>grid_map_core</exec_depend>
     <exec_depend>grid_map_msgs</exec_depend>
     <exec_depend>grid_map_ros</exec_depend>
+    <exec_depend>pcl_ros</exec_depend>
     <exec_depend>octomap</exec_depend>
     <exec_depend>octomap_ros</exec_depend>
     <exec_depend>moveit_msgs</exec_depend>

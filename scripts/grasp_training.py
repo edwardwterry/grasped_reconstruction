@@ -65,7 +65,7 @@ class GraspDataCollection:
         # dictionary {joint_name: value}
         self.joint_states = self.get_joint_states()
         self.object_height = 0.0  # [m]
-        self.object_position = [0.4, 0.0, 0.76]
+        self.object_position = [0.3, 0.0, 0.76]
         self.phase = 'pre'
         self.finger_joint_angles_grasp = 0.3
         self.finger_joint_angles_ungrasp = 0.1
@@ -345,8 +345,8 @@ class GraspDataCollection:
         postgrretr.desired_distance = 0.15  # [m]
         postgrretr.min_distance = 0.02  # [m]
 
-        grasp.pre_grasp_posture = pgpost
-        grasp.grasp_posture = gpost
+        # grasp.pre_grasp_posture = pgpost
+        # grasp.grasp_posture = gpost
         grasp.grasp_pose = gp
         grasp.grasp_quality = 0.5
         grasp.pre_grasp_approach = pregrapp

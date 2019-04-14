@@ -4,6 +4,8 @@ project(grasped_reconstruction)
 ## Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++11)
 set(OpenCV_DIR /usr/local/share/OpenCV/)
+set(PCL_ROS_INCLUDE_DIRS /home/et/deps_ws/src/perception_pcl/pcl_ros/include)
+
 # https://stackoverflow.com/questions/37441189/locations-pclconfig-cmake-and-pcl-config-cmake-files-for-pcl-library
 set(PCL_DIR "/usr/lib/x86_64-linux-gnu/cmake/pcl/")
 set(octomap_DIR "/opt/ros/kinetic/share/octomap/")
@@ -123,6 +125,7 @@ catkin_package(
   DEPENDS 
     gazebo_ros
     PCL
+    pcl_ros
     grid_map_core
     grid_map_ros
     grid_map_msgs
@@ -143,6 +146,7 @@ include_directories(
  ${GAZEBO_INCLUDE_DIRS}
  ${PCL_INCLUDE_DIRS}
  ${octomap_INCLUDE_DIRS}
+ ${PCL_ROS_INCLUDE_DIRS}
 )
 add_definitions(${PCL_DEFINITIONS})
 ## Declare a C++ library
@@ -176,6 +180,7 @@ target_link_libraries(${PROJECT_NAME}
   ${GAZEBO_LIBRARIES}
   ${PCL_LIBRARIES}
   ${OpenCV_LIBS}
+  ${PCL_ROS_INCLUDE_DIRS}
 )
 
 #############

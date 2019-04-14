@@ -10,18 +10,82 @@
 			"path": "/opt/ros/kinetic/share"
 		},
 		{
-			"path": "/home/et/catkin_ws/src/bhand_gazebo"
-		},
-		{
-			"path": "/home/et/catkin_ws/src/ur5_barrett_bringup"
-		},
-		{
 			"path": "/home/et/.gazebo/models"
+		},
+		{
+			"path": "/home/et/deps_ws/src/elevation_mapping"
+		},
+		{
+			"path": "/home/et/deps_ws/src/grid_map"
+		},
+		{
+			"path": "/home/et/deps_ws/src"
+		},
+		{
+			"path": "/home/et/deps_ws/src/perception_pcl/pcl_ros"
+		},
+		{
+			"path": "/usr/include/pcl-1.7/pcl/filters"
+		},
+		{
+			"path": "/home/et/catkin_bak/rpg_ig_active_reconstruction"
 		}
 	],
 	"settings": {
 		"files.associations": {
-			"*.ipp": "cpp"
+			"*.ipp": "cpp",
+			"iostream": "cpp",
+			"chrono": "cpp",
+			"limits": "cpp",
+			"cctype": "cpp",
+			"clocale": "cpp",
+			"cmath": "cpp",
+			"csignal": "cpp",
+			"cstdarg": "cpp",
+			"cstddef": "cpp",
+			"cstdio": "cpp",
+			"cstdlib": "cpp",
+			"cstring": "cpp",
+			"ctime": "cpp",
+			"cwchar": "cpp",
+			"cwctype": "cpp",
+			"array": "cpp",
+			"atomic": "cpp",
+			"strstream": "cpp",
+			"*.tcc": "cpp",
+			"bitset": "cpp",
+			"codecvt": "cpp",
+			"condition_variable": "cpp",
+			"cstdint": "cpp",
+			"deque": "cpp",
+			"unordered_map": "cpp",
+			"vector": "cpp",
+			"exception": "cpp",
+			"fstream": "cpp",
+			"functional": "cpp",
+			"future": "cpp",
+			"initializer_list": "cpp",
+			"iosfwd": "cpp",
+			"istream": "cpp",
+			"memory": "cpp",
+			"mutex": "cpp",
+			"new": "cpp",
+			"ostream": "cpp",
+			"numeric": "cpp",
+			"ratio": "cpp",
+			"sstream": "cpp",
+			"stdexcept": "cpp",
+			"streambuf": "cpp",
+			"system_error": "cpp",
+			"thread": "cpp",
+			"type_traits": "cpp",
+			"tuple": "cpp",
+			"typeindex": "cpp",
+			"typeinfo": "cpp",
+			"utility": "cpp",
+			"complex": "cpp",
+			"list": "cpp",
+			"core": "cpp"
 		}
 	}
 }

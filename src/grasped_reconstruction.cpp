@@ -56,6 +56,8 @@ public:
   PointCloud combo_orig, orig_observed, orig_unobserved;
   bool orig_observed_set = false;
   bool orig_unobserved_set = false;
+  int NUM_AZIMUTH_POINTS = 6;
+  int NUM_ELEVATION_POINTS = 6;
 
   // canonical bounding box
   pcl::PointXYZ orig_bb_min_, orig_bb_max_;
@@ -165,6 +167,13 @@ public:
     marker.color.g = 0.5;
     marker.color.b = 0.0;
     bb_pub.publish(marker);
+
+    _n.setParam("orig_bb_min/x", orig_bb_min_.x);
+    _n.setParam("orig_bb_min/y", orig_bb_min_.y);
+    _n.setParam("orig_bb_min/z", orig_bb_min_.z);
+    _n.setParam("orig_bb_max/x", orig_bb_max_.x);
+    _n.setParam("orig_bb_max/y", orig_bb_max_.y);
+    _n.setParam("orig_bb_max/z", orig_bb_max_.z);
   }
 
   void pcClbk(const sensor_msgs::PointCloud2ConstPtr &msg)
@@ -545,6 +554,7 @@ public:
 
   float calculateViewEntropy(const Eigen::Vector4f &origin, const PointCloud &cloud)
   {
+    float entropy = 0.0f;
     std::unordered_map<int, float> cell_occupancy_prob;
     for (PointCloud::iterator it = cloud.begin(); it != cloud.end(); it++)
     {
@@ -564,29 +574,40 @@ public:
       }
     }
     std::unordered_set<int> cell_visited;
-    for (PointCloud::iterator it = cloud.begin(); it != cloud.end(); it++)
+    for (PointCloud::iterator it = cloud.begin(); it != cloud.end(); it++) // for each point in input cloud
     {
       std::vector<Eigen::Vector3i> out_ray;
+      std::vector<Eigen::Vector3i> out_ray_unique;
       Eigen::Vector3i target_voxel = worldCoordToGridCoord(it->x, it->y, it->z);
       Eigen::Vector4f direction;
       direction << it->x - origin[0], it->y - origin[1], it->z - origin[2], 0.0f;
       direction.normalize();
       rayTraversal(out_ray, target_voxel, origin, direction, t_min); // TODO t_min
-      for (size_t i = 0; i < out_ray.size(); i++)
+      for (size_t i = 0; i < out_ray.size(); i++)                    // for each voxel the ray passed through
       {
         int index = gridCoordToVoxelIndex(out_ray[i]);
         auto it_cell = cell_visited.find(index);
-        if (it_cell == cell_visited.end())
+        if (it_cell == cell_visited.end()) // if the voxel hasn't been included before
         {
           cell_visited.insert(index);
+          out_ray_unique.push_back(out_ray[i]);
         }
       }
+      entropy += calculateEntropyAlongRay(out_ray_unique, cell_occupancy_prob);
     }
   }
 
-  float calculateEntropyAlongRay(const std::vector<Eigen::Vector3i> &ray)
+  float calculateEntropyAlongRay(const std::vector<Eigen::Vector3i> &ray, const std::unordered_map<int, float> &cell_occupancy_prob) // TODO distance weighted
   {
-    
+    float entropy = 0.0f;
+    for (const auto &v : ray)
+    {
+      it_prob = cell_occupancy_prob.find(gridCoordToVoxelIndex(v));
+      ROS_ASSERT(it_prob != cell_occupancy_prob.end());
+      float p = it_prob->second;
+      entropy += -p * log(p) - (1.0f - p) * log(1.0f - p);
+    }
+    return entropy;
   }
 
   Eigen::Vector3i worldCoordToGridCoord(const float x, const float y, const float z)
@@ -642,15 +663,19 @@ public:
   void rayTraversal(std::vector<Eigen::Vector3i> &out_ray,
                     const Eigen::Vector3i &target_voxel,
                     const Eigen::Vector4f &origin,
-                    const Eigen::Vector4f &direction,
-                    const float t_min)
+                    const Eigen::Vector4f &direction)
   {
+
+    float t_min = rayBoxIntersection(origin, direction);
+    if (t_min < 0)
+    {
+      return;
+    }
     // coordinate of the boundary of the voxel grid
     Eigen::Vector4f start = origin + t_min * direction;
 
     // i,j,k coordinate of the voxel were the ray enters the voxel grid
     Eigen::Vector3i ijk = worldCoordToGridCoord(start[0], start[1], start[2]);
-    //Eigen::Vector3i ijk = this->getGridCoordinates (start_x, start_y, start_z);
 
     // steps in which direction we have to travel in the voxel grid
     int step_x, step_y, step_z;
@@ -697,9 +722,9 @@ public:
     float t_delta_y = leaf_size_[1] / static_cast<float>(fabs(direction[1]));
     float t_delta_z = leaf_size_[2] / static_cast<float>(fabs(direction[2]));
 
-    while ((ijk[0] < max_b_[0] + 1) && (ijk[0] >= min_b_[0]) &&
-           (ijk[1] < max_b_[1] + 1) && (ijk[1] >= min_b_[1]) &&
-           (ijk[2] < max_b_[2] + 1) && (ijk[2] >= min_b_[2]))
+    while ((ijk[0] < orig_bb_max_.x + 1) && (ijk[0] >= orig_bb_min_.x) &&
+           (ijk[1] < orig_bb_max_.y + 1) && (ijk[1] >= orig_bb_min_.y) &&
+           (ijk[2] < orig_bb_max_.z + 1) && (ijk[2] >= orig_bb_min_.z))
     {
       // add voxel to ray
       out_ray.push_back(ijk);
@@ -723,6 +748,91 @@ public:
       {
         t_max_z += t_delta_z;
         ijk[2] += step_z;
+      }
+    }
+  }
+
+  float rayBoxIntersection(const Eigen::Vector4f &origin,
+                           const Eigen::Vector4f &direction)
+  {
+    float tmin, tmax, tymin, tymax, tzmin, tzmax;
+
+    if (direction[0] >= 0)
+    {
+      tmin = (orig_bb_min_.x - origin[0]) / direction[0];
+      tmax = (orig_bb_max_.x - origin[0]) / direction[0];
+    }
+    else
+    {
+      tmin = (orig_bb_max_.x - origin[0]) / direction[0];
+      tmax = (orig_bb_min_.x - origin[0]) / direction[0];
+    }
+
+    if (direction[1] >= 0)
+    {
+      tymin = (orig_bb_min_.y - origin[1]) / direction[1];
+      tymax = (orig_bb_max_.y - origin[1]) / direction[1];
+    }
+    else
+    {
+      tymin = (orig_bb_max_.y - origin[1]) / direction[1];
+      tymax = (orig_bb_min_.y - origin[1]) / direction[1];
+    }
+
+    if ((tmin > tymax) || (tymin > tmax))
+    {
+      PCL_ERROR("no intersection with the bounding box \n");
+      tmin = -1.0f;
+      return tmin;
+    }
+
+    if (tymin > tmin)
+      tmin = tymin;
+    if (tymax < tmax)
+      tmax = tymax;
+
+    if (direction[2] >= 0)
+    {
+      tzmin = (orig_bb_min_.z - origin[2]) / direction[2];
+      tzmax = (orig_bb_max_.z - origin[2]) / direction[2];
+    }
+    else
+    {
+      tzmin = (orig_bb_max_.z - origin[2]) / direction[2];
+      tzmax = (orig_bb_min_.z - origin[2]) / direction[2];
+    }
+
+    if ((tmin > tzmax) || (tzmin > tmax))
+    {
+      PCL_ERROR("no intersection with the bounding box \n");
+      tmin = -1.0f;
+      return tmin;
+    }
+
+    if (tzmin > tmin)
+      tmin = tzmin;
+    if (tzmax < tmax)
+      tmax = tzmax;
+
+    return tmin;
+  }
+
+  void generateViewCandidates(const float radius, std::vector<Eigen::Vector4f> &views)
+  {
+    float az_min = 0.0f;
+    float az_max = 2 * M_PI;
+    float el_min = -M_PI;
+    float el_max = M_PI;
+    float az_incr = (az_max - az_min) / NUM_AZIMUTH_POINTS;
+    float el_incr = (el_max - el_min) / NUM_ELEVATION_POINTS;
+    for (az = az_min; az < az_max; az += az_incr){
+      for (el = el; el < el_max; el += el_incr){
+        Eigen::Vector4f v;
+        v[0] = radius * cos(az);
+        v[1] = radius * sin(az);
+        v[2] = radius * sin(el);
+        v[3] = 0.0f;
+        views.push_back(v);
       }
     }
   }
