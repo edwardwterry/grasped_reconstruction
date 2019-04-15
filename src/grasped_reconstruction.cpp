@@ -58,6 +58,9 @@ public:
   int NUM_ELEVATION_POINTS = 6;
   float VIEW_RADIUS = 0.2f;
   float TABLETOP_HEIGHT = 0.735f;
+  float P_OCC = 0.9f;
+  float P_UNOBS = 0.5f;
+  float P_FREE = 0.1f;
   bool combo_made = false;
 
   // canonical bounding box
@@ -96,8 +99,8 @@ public:
       std::cout << "Got bounding box" << std::endl;
 
       IndexedPointsWithProb ipp;
-      appendAndIncludePointCloudProb(orig_observed, 1.0f, ipp);
-      appendAndIncludePointCloudProb(orig_unobserved, 0.5f, ipp);
+      appendAndIncludePointCloudProb(orig_observed, P_OCC, ipp);
+      appendAndIncludePointCloudProb(orig_unobserved, P_UNOBS, ipp);
       for (auto it = ipp.begin(); it != ipp.end(); it++)
       {
         std::cout << "Point #: " << it->first << " Coord: " << it->second.first.x << " " << it->second.first.y << " " << it->second.first.z << " Prob: " << it->second.second << std::endl;
@@ -394,14 +397,23 @@ public:
       float prob = it->second.second;
       if (it_prob == cell_occupancy_prob.end()) // couldn't find it
       {
-        std::cout<<"Adding to cell_occupancy_prob: "<<index<<" "<<prob<<std::endl;
+        // std::cout << "Adding to cell_occupancy_prob: " << index << " " << prob << std::endl;
         cell_occupancy_prob.insert(std::make_pair(index, prob)); // TODO include initial probability
       }
       else // found it, update the probability
       {
         // take the average for now, TODO make running average later!
         it_prob->second = 0.5f * (it_prob->second + prob);
-        std::cout<<"Updating cell_occupancy_prob: "<<index<<" "<<it_prob->second<<std::endl;
+        // std::cout << "Updating cell_occupancy_prob: " << index << " " << it_prob->second << std::endl;
+      }
+    }
+    // fill in the gaps!
+    for (int i = 0; i < (nr_ + 1) * (nc_ + 1) * (nl_ + 1); i++)
+    {
+      auto it = cell_occupancy_prob.find(i);
+      if (it == cell_occupancy_prob.end())
+      {
+        cell_occupancy_prob.insert(std::make_pair(i, P_FREE));
       }
     }
     std::set<int> cell_visited;
@@ -413,24 +425,29 @@ public:
       Eigen::Vector4f direction;
       direction << it->second.first.x - origin[0], it->second.first.y - origin[1], it->second.first.z - origin[2], 0.0f;
       direction.normalize();
-      std::cout << "Origin: " << origin[0] << " " << origin[1] << " " << origin[2] << " Direction: " << direction[0] << " " << direction[1] << " " << direction[2] << " Target Voxel: " << target_voxel[0] << " " << target_voxel[1] << " " << target_voxel[2] << std::endl;
-      std::cout << "Target: " << it->second.first.x << " " << it->second.first.y << " " << it->second.first.z << std::endl;
+      // std::cout << "Origin: " << origin[0] << " " << origin[1] << " " << origin[2] << " Direction: " << direction[0] << " " << direction[1] << " " << direction[2] << " Target Voxel: " << target_voxel[0] << " " << target_voxel[1] << " " << target_voxel[2] << std::endl;
+      // std::cout << "Target: " << it->second.first.x << " " << it->second.first.y << " " << it->second.first.z << std::endl;
 
       rayTraversal(out_ray, target_voxel, origin, direction);
       for (size_t i = 0; i < out_ray.size(); i++) // for each voxel the ray passed through
       {
         int index = gridCoordToVoxelIndex(out_ray[i]);
-        std::cout << "Grid coord: " << out_ray[i][0] << " " << out_ray[i][1] << " " << out_ray[i][2] << " Voxel index: " << index << std::endl;
+        // std::cout << "Grid coord: " << out_ray[i][0] << " " << out_ray[i][1] << " " << out_ray[i][2] << " Voxel index: " << index << std::endl;
         auto it_cell = cell_visited.find(index);
         if (it_cell == cell_visited.end()) // if the voxel hasn't been included before
         {
-          std::cout << "Adding cell index to list: " << index << std::endl;
+          // std::cout << "Adding cell index to list: " << index << std::endl;
           cell_visited.insert(index);
           out_ray_unique.push_back(out_ray[i]);
+        }
+        else
+        {
+          // std::cout << "Not adding a repeat observation of voxel ID: " << index << std::endl;
         }
       }
       entropy += calculateEntropyAlongRay(out_ray_unique, cell_occupancy_prob);
     }
+    return entropy;
   }
 
   float calculateEntropyAlongRay(const std::vector<Eigen::Vector3i> &ray, const std::unordered_map<int, float> &cell_occupancy_prob) // TODO distance weighted
@@ -439,13 +456,13 @@ public:
     for (const auto &v : ray)
     {
       int index = gridCoordToVoxelIndex(v);
-      std::cout << ">> along ray... Grid coord: " << v[0] << " " << v[1] << " " << v[2] << " Voxel index: " << index << std::endl;
+      // std::cout << ">> along ray... Grid coord: " << v[0] << " " << v[1] << " " << v[2] << " Voxel index: " << index << std::endl;
       auto it_prob = cell_occupancy_prob.find(gridCoordToVoxelIndex(v));
       ROS_ASSERT(it_prob != cell_occupancy_prob.end());
       float p = it_prob->second;
       entropy += -p * log(p) - (1.0f - p) * log(1.0f - p);
     }
-    std::cout<<"Entropy from this ray cast: "<<entropy<<std::endl;
+    // std::cout << "Entropy from this ray cast: " << entropy << std::endl;
     return entropy;
   }
 
@@ -506,7 +523,7 @@ public:
                     const Eigen::Vector4f &origin,
                     const Eigen::Vector4f &direction)
   {
-    std::cout << "Beginning ray traversal!" << std::endl;
+    // std::cout << "Beginning ray traversal!" << std::endl;
     float t_min = rayBoxIntersection(origin, direction);
     if (t_min < 0)
     {
@@ -514,18 +531,18 @@ public:
     }
     // coordinate of the boundary of the voxel grid
     Eigen::Vector4f start = origin + t_min * direction;
-    std::cout << "Start world coord: " << start[0] << " " << start[1] << " " << start[2] << std::endl;
+    // std::cout << "Start world coord: " << start[0] << " " << start[1] << " " << start[2] << std::endl;
 
     // i,j,k coordinate of the voxel were the ray enters the voxel grid
     Eigen::Vector3i ijk = worldCoordToGridCoord(start[0], start[1], start[2]);
-    std::cout << "Entry voxel grid coord: " << ijk[0] << " " << ijk[1] << " " << ijk[2] << std::endl;
+    // std::cout << "Entry voxel grid coord: " << ijk[0] << " " << ijk[1] << " " << ijk[2] << std::endl;
 
     // steps in which direction we have to travel in the voxel grid
     int step_x, step_y, step_z;
 
     // centroid coordinate of the entry voxel
     Eigen::Vector4f voxel_max = gridCoordToWorldCoord(ijk);
-    std::cout << "Entry voxel world coord: " << voxel_max[0] << " " << voxel_max[1] << " " << voxel_max[2] << std::endl;
+    // std::cout << "Entry voxel world coord: " << voxel_max[0] << " " << voxel_max[1] << " " << voxel_max[2] << std::endl;
 
     if (direction[0] >= 0)
     {
@@ -572,7 +589,8 @@ public:
     {
       // add voxel to ray
       out_ray.push_back(ijk);
-
+      Eigen::Vector4f wc = gridCoordToWorldCoord(ijk);
+      // std::cout << "Saw voxel: " << ijk[0] << " " << ijk[1] << " " << ijk[2] << " at " << wc[0] << " " << wc[1] << " " << wc[2] << std::endl;
       // check if we reached target voxel
       if (ijk[0] == target_voxel[0] && ijk[1] == target_voxel[1] && ijk[2] == target_voxel[2])
         break;
@@ -593,8 +611,6 @@ public:
         t_max_z += t_delta_z;
         ijk[2] += step_z;
       }
-      Eigen::Vector4f wc = gridCoordToWorldCoord(ijk);
-      std::cout << "Saw voxel: " << ijk[0] << " " << ijk[1] << " " << ijk[2] << " at " << wc[0] << " " << wc[1] << " " << wc[2] << std::endl;
     }
   }
 
@@ -629,7 +645,7 @@ public:
 
     if ((tmin > tymax) || (tymin > tmax))
     {
-      PCL_ERROR("no intersection with the bounding box \n");
+      // PCL_ERROR("no intersection with the bounding box \n");
       tmin = -1.0f;
       return tmin;
     }
@@ -653,7 +669,7 @@ public:
 
     if ((tmin > tzmax) || (tzmin > tmax))
     {
-      PCL_ERROR("no intersection with the bounding box \n");
+      // PCL_ERROR("no intersection with the bounding box \n");
       tmin = -1.0f;
       return tmin;
     }
@@ -662,7 +678,7 @@ public:
       tmin = tzmin;
     if (tzmax < tmax)
       tmax = tzmax;
-    std::cout << "tmin: " << tmin << std::endl;
+    // std::cout << "tmin: " << tmin << std::endl;
     return tmin;
   }
 
