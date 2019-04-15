@@ -394,12 +394,14 @@ public:
       float prob = it->second.second;
       if (it_prob == cell_occupancy_prob.end()) // couldn't find it
       {
+        std::cout<<"Adding to cell_occupancy_prob: "<<index<<" "<<prob<<std::endl;
         cell_occupancy_prob.insert(std::make_pair(index, prob)); // TODO include initial probability
       }
       else // found it, update the probability
       {
         // take the average for now, TODO make running average later!
         it_prob->second = 0.5f * (it_prob->second + prob);
+        std::cout<<"Updating cell_occupancy_prob: "<<index<<" "<<it_prob->second<<std::endl;
       }
     }
     std::set<int> cell_visited;
@@ -411,14 +413,18 @@ public:
       Eigen::Vector4f direction;
       direction << it->second.first.x - origin[0], it->second.first.y - origin[1], it->second.first.z - origin[2], 0.0f;
       direction.normalize();
-      std::cout << "Direction: " << direction.matrix() << " Target Voxel: " << target_voxel << std::endl;
-      rayTraversal(out_ray, target_voxel, origin, -direction);
+      std::cout << "Origin: " << origin[0] << " " << origin[1] << " " << origin[2] << " Direction: " << direction[0] << " " << direction[1] << " " << direction[2] << " Target Voxel: " << target_voxel[0] << " " << target_voxel[1] << " " << target_voxel[2] << std::endl;
+      std::cout << "Target: " << it->second.first.x << " " << it->second.first.y << " " << it->second.first.z << std::endl;
+
+      rayTraversal(out_ray, target_voxel, origin, direction);
       for (size_t i = 0; i < out_ray.size(); i++) // for each voxel the ray passed through
       {
         int index = gridCoordToVoxelIndex(out_ray[i]);
+        std::cout << "Grid coord: " << out_ray[i][0] << " " << out_ray[i][1] << " " << out_ray[i][2] << " Voxel index: " << index << std::endl;
         auto it_cell = cell_visited.find(index);
         if (it_cell == cell_visited.end()) // if the voxel hasn't been included before
         {
+          std::cout << "Adding cell index to list: " << index << std::endl;
           cell_visited.insert(index);
           out_ray_unique.push_back(out_ray[i]);
         }
@@ -432,11 +438,14 @@ public:
     float entropy = 0.0f;
     for (const auto &v : ray)
     {
+      int index = gridCoordToVoxelIndex(v);
+      std::cout << ">> along ray... Grid coord: " << v[0] << " " << v[1] << " " << v[2] << " Voxel index: " << index << std::endl;
       auto it_prob = cell_occupancy_prob.find(gridCoordToVoxelIndex(v));
       ROS_ASSERT(it_prob != cell_occupancy_prob.end());
       float p = it_prob->second;
       entropy += -p * log(p) - (1.0f - p) * log(1.0f - p);
     }
+    std::cout<<"Entropy from this ray cast: "<<entropy<<std::endl;
     return entropy;
   }
 
@@ -497,7 +506,7 @@ public:
                     const Eigen::Vector4f &origin,
                     const Eigen::Vector4f &direction)
   {
-
+    std::cout << "Beginning ray traversal!" << std::endl;
     float t_min = rayBoxIntersection(origin, direction);
     if (t_min < 0)
     {
@@ -505,15 +514,18 @@ public:
     }
     // coordinate of the boundary of the voxel grid
     Eigen::Vector4f start = origin + t_min * direction;
+    std::cout << "Start world coord: " << start[0] << " " << start[1] << " " << start[2] << std::endl;
 
     // i,j,k coordinate of the voxel were the ray enters the voxel grid
     Eigen::Vector3i ijk = worldCoordToGridCoord(start[0], start[1], start[2]);
+    std::cout << "Entry voxel grid coord: " << ijk[0] << " " << ijk[1] << " " << ijk[2] << std::endl;
 
     // steps in which direction we have to travel in the voxel grid
     int step_x, step_y, step_z;
 
     // centroid coordinate of the entry voxel
     Eigen::Vector4f voxel_max = gridCoordToWorldCoord(ijk);
+    std::cout << "Entry voxel world coord: " << voxel_max[0] << " " << voxel_max[1] << " " << voxel_max[2] << std::endl;
 
     if (direction[0] >= 0)
     {
@@ -554,9 +566,9 @@ public:
     float t_delta_y = leaf_size_[1] / static_cast<float>(fabs(direction[1]));
     float t_delta_z = leaf_size_[2] / static_cast<float>(fabs(direction[2]));
 
-    while ((ijk[0] < orig_bb_max_.x + 1) && (ijk[0] >= orig_bb_min_.x) &&
-           (ijk[1] < orig_bb_max_.y + 1) && (ijk[1] >= orig_bb_min_.y) &&
-           (ijk[2] < orig_bb_max_.z + 1) && (ijk[2] >= orig_bb_min_.z))
+    while ((ijk[0] < nr_ + 1) && (ijk[0] >= 0) &&
+           (ijk[1] < nc_ + 1) && (ijk[1] >= 0) &&
+           (ijk[2] < nl_ + 1) && (ijk[2] >= 0))
     {
       // add voxel to ray
       out_ray.push_back(ijk);
@@ -613,9 +625,11 @@ public:
       tymax = (orig_bb_min_.y - origin[1]) / direction[1];
     }
 
+    // std::cout << "tmin tmax tymin tymax: " << tmin << " " << tmax << " " << tymin << " " << tymax << std::endl;
+
     if ((tmin > tymax) || (tymin > tmax))
     {
-      // PCL_ERROR("no intersection with the bounding box \n");
+      PCL_ERROR("no intersection with the bounding box \n");
       tmin = -1.0f;
       return tmin;
     }
@@ -635,10 +649,11 @@ public:
       tzmin = (orig_bb_max_.z - origin[2]) / direction[2];
       tzmax = (orig_bb_min_.z - origin[2]) / direction[2];
     }
+    // std::cout << "tmin tmax tzmin tzmax: " << tmin << " " << tmax << " " << tzmin << " " << tzmax << std::endl;
 
     if ((tmin > tzmax) || (tzmin > tmax))
     {
-      // PCL_ERROR("no intersection with the bounding box \n");
+      PCL_ERROR("no intersection with the bounding box \n");
       tmin = -1.0f;
       return tmin;
     }
@@ -647,7 +662,7 @@ public:
       tmin = tzmin;
     if (tzmax < tmax)
       tmax = tzmax;
-
+    std::cout << "tmin: " << tmin << std::endl;
     return tmin;
   }
 
