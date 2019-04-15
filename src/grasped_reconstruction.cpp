@@ -55,13 +55,13 @@ public:
   PointCloud combo_orig, orig_observed, orig_unobserved;
   bool orig_observed_set = false;
   bool orig_unobserved_set = false;
-  int NUM_AZIMUTH_POINTS = 6;
-  int NUM_ELEVATION_POINTS = 6;
+  int NUM_AZIMUTH_POINTS = 4;
+  int NUM_ELEVATION_POINTS = 2;
   float VIEW_RADIUS = 0.2f;
   float TABLETOP_HEIGHT = 0.735f;
-  float P_OCC = 0.9f;
+  float P_OCC = 0.99f;
   float P_UNOBS = 0.5f;
-  float P_FREE = 0.1f;
+  float P_FREE = 0.01f;
   bool combo_made = false;
 
   // canonical bounding box
@@ -84,12 +84,12 @@ public:
       sor.filter(*cl);
       pcl::PointXYZ orig_bb_obs_min, orig_bb_obs_max;
       pcl::getMinMax3D(*cl, orig_bb_obs_min, orig_bb_obs_max);
-      std::cout<<"obs min/max: "<<orig_bb_obs_min<<" "<<orig_bb_obs_max<<std::endl;
+      std::cout << "obs min/max: " << orig_bb_obs_min << " " << orig_bb_obs_max << std::endl;
       *cl = orig_unobserved;
       sor.filter(*cl);
       pcl::PointXYZ orig_bb_unobs_min, orig_bb_unobs_max;
       pcl::getMinMax3D(*cl, orig_bb_unobs_min, orig_bb_unobs_max);
-      std::cout<<"unobs min/max: "<<orig_bb_unobs_min<<" "<<orig_bb_unobs_max<<std::endl;
+      std::cout << "unobs min/max: " << orig_bb_unobs_min << " " << orig_bb_unobs_max << std::endl;
 
       orig_bb_min_.x = std::min(orig_bb_unobs_min.x, orig_bb_obs_min.x);
       orig_bb_min_.y = std::min(orig_bb_unobs_min.y, orig_bb_obs_min.y);
@@ -399,11 +399,11 @@ public:
         marker.pose.position.y = views.at(i)[1];
         marker.pose.position.z = views.at(i)[2];
         // direction between view origin and object
-        marker.pose.orientation.x = quats[i].x();
-        marker.pose.orientation.y = quats[i].y();
-        marker.pose.orientation.z = quats[i].z();
-        marker.pose.orientation.w = quats[i].w();
-        marker.scale.x = view_entropy[i]/entropy*0.1;
+        marker.pose.orientation.x = 0; //quats[i].x();
+        marker.pose.orientation.y = 0; //quats[i].y();
+        marker.pose.orientation.z = 0; //quats[i].z();
+        marker.pose.orientation.w = 1; //quats[i].w();
+        marker.scale.x = view_entropy[i] / entropy * 0.1;
         marker.scale.y = 0.01;
         marker.scale.z = 0.01;
         marker.color.a = 1.0; // Don't forget to set the alpha!
@@ -412,8 +412,9 @@ public:
         marker.color.b = 0.0;
         ma.markers.push_back(marker);
       }
-      while (entropy_arrow_pub.getNumSubscribers()<1){
-        std::cout<<"Waiting for arrow subscribers to connect..."<<std::endl;
+      while (entropy_arrow_pub.getNumSubscribers() < 1)
+      {
+        std::cout << "Waiting for arrow subscribers to connect..." << std::endl;
         ros::Duration(1.0).sleep();
       }
       entropy_arrow_pub.publish(ma);
@@ -485,7 +486,8 @@ public:
           // std::cout << "Not adding a repeat observation of voxel ID: " << index << std::endl;
         }
       }
-      entropy += calculateEntropyAlongRay(out_ray_unique, cell_occupancy_prob);
+      // entropy += calculateEntropyAlongRay(out_ray_unique, cell_occupancy_prob);
+      entropy += calculateEntropyAlongRay(out_ray, cell_occupancy_prob);
     }
     return entropy;
   }
@@ -724,8 +726,8 @@ public:
 
   void generateViewCandidates(std::vector<Eigen::Vector4f> &views, std::vector<Eigen::Quaternionf> &quats)
   {
-    float az_min = 0.0f;
-    float az_max = 2.0f * M_PI;
+    float az_min = 0.0f + 0.05f;
+    float az_max = 2.0f * M_PI + 0.05f;
     float el_min = -M_PI / 2.0f;
     float el_max = M_PI / 2.0f;
     float az_incr = (az_max - az_min) / NUM_AZIMUTH_POINTS;
@@ -746,11 +748,21 @@ public:
         // std::cout << "Candidate origin: " << v[0] << " " << v[1] << " " << v[2] << std::endl;
         // calculate quaternion from view to origin
         // https://stackoverflow.com/questions/31589901/euler-to-quaternion-quaternion-to-euler-using-eigen
-        Eigen::Quaternionf q;
-        q = Eigen::AngleAxisf(el, Eigen::Vector3f::UnitY()) * Eigen::AngleAxisf(az, Eigen::Vector3f::UnitZ());
-        quats.push_back(q);
+        // Eigen::Quaternionf q;
+        // q = Eigen::AngleAxisf(el, Eigen::Vector3f::UnitY()) * Eigen::AngleAxisf(az, Eigen::Vector3f::UnitZ());
+        // quats.push_back(q);
       }
     }
+    // at top
+    Eigen::Vector4f v;
+    v[0] = world_T_object_tf.getOrigin().getX();
+    v[1] = world_T_object_tf.getOrigin().getY();
+    v[2] = VIEW_RADIUS * sin(M_PI / 2.0f) + world_T_object_tf.getOrigin().getZ();
+    v[3] = 0.0f;
+    views.push_back(v);
+    // at bottom
+    v[2] = VIEW_RADIUS * sin(-M_PI / 2.0f) + world_T_object_tf.getOrigin().getZ();
+    views.push_back(v);
   }
 };
 
