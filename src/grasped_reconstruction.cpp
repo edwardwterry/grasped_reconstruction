@@ -19,6 +19,7 @@ public:
     combo_pub = n.advertise<sensor_msgs::PointCloud2>("combo", 1);
     object_pub = n.advertise<sensor_msgs::PointCloud2>("segmented_object", 1);
     tabletop_pub = n.advertise<sensor_msgs::PointCloud2>("tabletop", 1);
+    entropy_arrow_pub = n.advertise<visualization_msgs::MarkerArray>("entropy_arrows", 1);
     bb_pub = n.advertise<visualization_msgs::Marker>("bbox", 1);
     cf_pub = n.advertise<sensor_msgs::PointCloud2>("color_filtered", 1);
     image_transport::ImageTransport it(n);
@@ -46,7 +47,7 @@ public:
   }
   ros::NodeHandle _n;
   ros::Subscriber pc_sub, gm_sub, occ_sub;
-  ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub;
+  ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub, entropy_arrow_pub;
   image_transport::Publisher hm_im_pub;
   tf::TransformListener listener;
   tf::StampedTransform world_T_lens_link_tf, world_T_object_tf;
@@ -83,28 +84,30 @@ public:
       sor.filter(*cl);
       pcl::PointXYZ orig_bb_obs_min, orig_bb_obs_max;
       pcl::getMinMax3D(*cl, orig_bb_obs_min, orig_bb_obs_max);
+      std::cout<<"obs min/max: "<<orig_bb_obs_min<<" "<<orig_bb_obs_max<<std::endl;
       *cl = orig_unobserved;
       sor.filter(*cl);
       pcl::PointXYZ orig_bb_unobs_min, orig_bb_unobs_max;
       pcl::getMinMax3D(*cl, orig_bb_unobs_min, orig_bb_unobs_max);
+      std::cout<<"unobs min/max: "<<orig_bb_unobs_min<<" "<<orig_bb_unobs_max<<std::endl;
 
       orig_bb_min_.x = std::min(orig_bb_unobs_min.x, orig_bb_obs_min.x);
       orig_bb_min_.y = std::min(orig_bb_unobs_min.y, orig_bb_obs_min.y);
       orig_bb_min_.z = std::min(orig_bb_unobs_min.z, orig_bb_obs_min.z);
 
-      orig_bb_max_.x = std::max(orig_bb_unobs_max.x, orig_bb_unobs_max.x);
-      orig_bb_max_.y = std::max(orig_bb_unobs_max.y, orig_bb_unobs_max.y);
-      orig_bb_max_.z = std::max(orig_bb_unobs_max.z, orig_bb_unobs_max.z);
+      orig_bb_max_.x = std::max(orig_bb_unobs_max.x, orig_bb_obs_max.x);
+      orig_bb_max_.y = std::max(orig_bb_unobs_max.y, orig_bb_obs_max.y);
+      orig_bb_max_.z = std::max(orig_bb_unobs_max.z, orig_bb_obs_max.z);
 
       std::cout << "Got bounding box" << std::endl;
 
       IndexedPointsWithProb ipp;
       appendAndIncludePointCloudProb(orig_observed, P_OCC, ipp);
       appendAndIncludePointCloudProb(orig_unobserved, P_UNOBS, ipp);
-      for (auto it = ipp.begin(); it != ipp.end(); it++)
-      {
-        std::cout << "Point #: " << it->first << " Coord: " << it->second.first.x << " " << it->second.first.y << " " << it->second.first.z << " Prob: " << it->second.second << std::endl;
-      }
+      // for (auto it = ipp.begin(); it != ipp.end(); it++)
+      // {
+      //   std::cout << "Point #: " << it->first << " Coord: " << it->second.first.x << " " << it->second.first.y << " " << it->second.first.z << " Prob: " << it->second.second << std::endl;
+      // }
       try
       {
         ros::Time now = ros::Time::now();
@@ -129,7 +132,9 @@ public:
       std::cout << "Publishing the combined observed and unobserved point cloud" << std::endl;
 
       publishBoundingBoxMarker();
-      calculateNextBestView(ipp);
+      Eigen::Vector4f best_view = calculateNextBestView(ipp);
+      // find transform to get to this view
+
       combo_made = true;
     }
   }
@@ -362,11 +367,12 @@ public:
     std::cout << "Beginning calculation of next best view!" << std::endl;
     std::vector<float> view_entropy;
     std::vector<Eigen::Vector4f> views;
+    std::vector<Eigen::Quaternionf> quats;
     Eigen::Vector4f best_view;
     best_view << 0.0f, 0.0f, 0.0f, 0.0f;
     float entropy = 0.0f;
     divideBoundingBoxIntoVoxels();
-    generateViewCandidates(views);
+    generateViewCandidates(views, quats);
     for (const auto &v : views)
     {
       float e = calculateViewEntropy(v, ipp);
@@ -377,6 +383,40 @@ public:
         best_view = v;
         entropy = e;
       }
+    }
+
+    { // publish rviz arrows
+      visualization_msgs::MarkerArray ma;
+      for (int i = 0; i < views.size(); i++)
+      {
+        visualization_msgs::Marker marker;
+        marker.header.frame_id = "world";
+        marker.header.stamp = ros::Time();
+        marker.id = i;
+        marker.type = visualization_msgs::Marker::ARROW;
+        marker.action = visualization_msgs::Marker::ADD;
+        marker.pose.position.x = views.at(i)[0];
+        marker.pose.position.y = views.at(i)[1];
+        marker.pose.position.z = views.at(i)[2];
+        // direction between view origin and object
+        marker.pose.orientation.x = quats[i].x();
+        marker.pose.orientation.y = quats[i].y();
+        marker.pose.orientation.z = quats[i].z();
+        marker.pose.orientation.w = quats[i].w();
+        marker.scale.x = view_entropy[i]/entropy*0.1;
+        marker.scale.y = 0.01;
+        marker.scale.z = 0.01;
+        marker.color.a = 1.0; // Don't forget to set the alpha!
+        marker.color.r = 0.0;
+        marker.color.g = 1.0;
+        marker.color.b = 0.0;
+        ma.markers.push_back(marker);
+      }
+      while (entropy_arrow_pub.getNumSubscribers()<1){
+        std::cout<<"Waiting for arrow subscribers to connect..."<<std::endl;
+        ros::Duration(1.0).sleep();
+      }
+      entropy_arrow_pub.publish(ma);
     }
     return best_view;
   }
@@ -682,7 +722,7 @@ public:
     return tmin;
   }
 
-  void generateViewCandidates(std::vector<Eigen::Vector4f> &views)
+  void generateViewCandidates(std::vector<Eigen::Vector4f> &views, std::vector<Eigen::Quaternionf> &quats)
   {
     float az_min = 0.0f;
     float az_max = 2.0f * M_PI;
@@ -704,6 +744,11 @@ public:
         v[3] = 0.0f;
         views.push_back(v);
         // std::cout << "Candidate origin: " << v[0] << " " << v[1] << " " << v[2] << std::endl;
+        // calculate quaternion from view to origin
+        // https://stackoverflow.com/questions/31589901/euler-to-quaternion-quaternion-to-euler-using-eigen
+        Eigen::Quaternionf q;
+        q = Eigen::AngleAxisf(el, Eigen::Vector3f::UnitY()) * Eigen::AngleAxisf(az, Eigen::Vector3f::UnitZ());
+        quats.push_back(q);
       }
     }
   }
