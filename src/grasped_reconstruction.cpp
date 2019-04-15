@@ -55,8 +55,8 @@ public:
   PointCloud combo_orig, orig_observed, orig_unobserved;
   bool orig_observed_set = false;
   bool orig_unobserved_set = false;
-  int NUM_AZIMUTH_POINTS = 4;
-  int NUM_ELEVATION_POINTS = 2;
+  int NUM_AZIMUTH_POINTS = 8;
+  int NUM_ELEVATION_POINTS = 8;
   float VIEW_RADIUS = 0.2f;
   float TABLETOP_HEIGHT = 0.735f;
   float P_OCC = 0.99f;
@@ -399,10 +399,10 @@ public:
         marker.pose.position.y = views.at(i)[1];
         marker.pose.position.z = views.at(i)[2];
         // direction between view origin and object
-        marker.pose.orientation.x = 0; //quats[i].x();
-        marker.pose.orientation.y = 0; //quats[i].y();
-        marker.pose.orientation.z = 0; //quats[i].z();
-        marker.pose.orientation.w = 1; //quats[i].w();
+        marker.pose.orientation.x = quats[i].x();
+        marker.pose.orientation.y = quats[i].y();
+        marker.pose.orientation.z = quats[i].z();
+        marker.pose.orientation.w = quats[i].w();
         marker.scale.x = view_entropy[i] / entropy * 0.1;
         marker.scale.y = 0.01;
         marker.scale.z = 0.01;
@@ -458,13 +458,46 @@ public:
       }
     }
     std::set<int> cell_visited;
-    for (auto it = ipp.begin(); it != ipp.end(); it++) // for each point in input cloud
+    // for (auto it = ipp.begin(); it != ipp.end(); it++) // for each point in input cloud
+    // {
+    //   std::vector<Eigen::Vector3i> out_ray;
+    //   std::vector<Eigen::Vector3i> out_ray_unique;
+    //   Eigen::Vector3i target_voxel = worldCoordToGridCoord(it->second.first.x, it->second.first.y, it->second.first.z);
+    //   Eigen::Vector4f direction;
+    //   direction << it->second.first.x - origin[0], it->second.first.y - origin[1], it->second.first.z - origin[2], 0.0f;
+    //   direction.normalize();
+    //   // std::cout << "Origin: " << origin[0] << " " << origin[1] << " " << origin[2] << " Direction: " << direction[0] << " " << direction[1] << " " << direction[2] << " Target Voxel: " << target_voxel[0] << " " << target_voxel[1] << " " << target_voxel[2] << std::endl;
+    //   // std::cout << "Target: " << it->second.first.x << " " << it->second.first.y << " " << it->second.first.z << std::endl;
+
+    //   rayTraversal(out_ray, target_voxel, origin, direction);
+    //   for (size_t i = 0; i < out_ray.size(); i++) // for each voxel the ray passed through
+    //   {
+    //     int index = gridCoordToVoxelIndex(out_ray[i]);
+    //     // std::cout << "Grid coord: " << out_ray[i][0] << " " << out_ray[i][1] << " " << out_ray[i][2] << " Voxel index: " << index << std::endl;
+    //     auto it_cell = cell_visited.find(index);
+    //     if (it_cell == cell_visited.end()) // if the voxel hasn't been included before
+    //     {
+    //       // std::cout << "Adding cell index to list: " << index << std::endl;
+    //       cell_visited.insert(index);
+    //       out_ray_unique.push_back(out_ray[i]);
+    //     }
+    //     else
+    //     {
+    //       // std::cout << "Not adding a repeat observation of voxel ID: " << index << std::endl;
+    //     }
+    //   }
+    //   entropy += calculateEntropyAlongRay(out_ray_unique, cell_occupancy_prob);
+    //   // entropy += calculateEntropyAlongRay(out_ray, cell_occupancy_prob);
+    // }
+
+    for (int i = 0; i < (nr_ + 1) * (nc_ + 1) * (nl_ + 1); i++) // for each point in voxel grid
     {
       std::vector<Eigen::Vector3i> out_ray;
       std::vector<Eigen::Vector3i> out_ray_unique;
-      Eigen::Vector3i target_voxel = worldCoordToGridCoord(it->second.first.x, it->second.first.y, it->second.first.z);
+      Eigen::Vector3i target_voxel = voxelIndexToGridCoord(i);
+      Eigen::Vector4f target_voxel_w = voxelIndexToWorldCoord(i);
       Eigen::Vector4f direction;
-      direction << it->second.first.x - origin[0], it->second.first.y - origin[1], it->second.first.z - origin[2], 0.0f;
+      direction << target_voxel_w[0] - origin[0], target_voxel_w[1] - origin[1], target_voxel_w[2] - origin[2], 0.0f;
       direction.normalize();
       // std::cout << "Origin: " << origin[0] << " " << origin[1] << " " << origin[2] << " Direction: " << direction[0] << " " << direction[1] << " " << direction[2] << " Target Voxel: " << target_voxel[0] << " " << target_voxel[1] << " " << target_voxel[2] << std::endl;
       // std::cout << "Target: " << it->second.first.x << " " << it->second.first.y << " " << it->second.first.z << std::endl;
@@ -486,9 +519,10 @@ public:
           // std::cout << "Not adding a repeat observation of voxel ID: " << index << std::endl;
         }
       }
-      // entropy += calculateEntropyAlongRay(out_ray_unique, cell_occupancy_prob);
-      entropy += calculateEntropyAlongRay(out_ray, cell_occupancy_prob);
+      entropy += calculateEntropyAlongRay(out_ray_unique, cell_occupancy_prob);
+      // entropy += calculateEntropyAlongRay(out_ray, cell_occupancy_prob);
     }
+
     return entropy;
   }
 
@@ -502,6 +536,8 @@ public:
       auto it_prob = cell_occupancy_prob.find(gridCoordToVoxelIndex(v));
       ROS_ASSERT(it_prob != cell_occupancy_prob.end());
       float p = it_prob->second;
+      if (p > 0.8)
+        break;
       entropy += -p * log(p) - (1.0f - p) * log(1.0f - p);
     }
     // std::cout << "Entropy from this ray cast: " << entropy << std::endl;
@@ -726,10 +762,10 @@ public:
 
   void generateViewCandidates(std::vector<Eigen::Vector4f> &views, std::vector<Eigen::Quaternionf> &quats)
   {
-    float az_min = 0.0f + 0.05f;
-    float az_max = 2.0f * M_PI + 0.05f;
-    float el_min = -M_PI / 2.0f;
-    float el_max = M_PI / 2.0f;
+    float az_min = 0.0f + M_PI / 16;
+    float az_max = 2.0f * M_PI + M_PI / 16;
+    float el_min = -M_PI / 2.0f + M_PI / 16;
+    float el_max = M_PI / 2.0f + M_PI / 16;
     float az_incr = (az_max - az_min) / NUM_AZIMUTH_POINTS;
     float el_incr = (el_max - el_min) / NUM_ELEVATION_POINTS;
     // std::cout << "az_incr: " << az_incr << " el_incr: " << el_incr << std::endl;
@@ -740,17 +776,21 @@ public:
       {
         // std::cout << "az: " << az << " el: " << el << std::endl;
         Eigen::Vector4f v;
-        v[0] = VIEW_RADIUS * cos(az) + world_T_object_tf.getOrigin().getX();
-        v[1] = VIEW_RADIUS * sin(az) + world_T_object_tf.getOrigin().getY();
+        v[0] = VIEW_RADIUS * cos(az) * cos(el) + world_T_object_tf.getOrigin().getX();
+        v[1] = VIEW_RADIUS * sin(az) * cos(el) + world_T_object_tf.getOrigin().getY();
         v[2] = VIEW_RADIUS * sin(el) + world_T_object_tf.getOrigin().getZ();
         v[3] = 0.0f;
         views.push_back(v);
         // std::cout << "Candidate origin: " << v[0] << " " << v[1] << " " << v[2] << std::endl;
         // calculate quaternion from view to origin
         // https://stackoverflow.com/questions/31589901/euler-to-quaternion-quaternion-to-euler-using-eigen
-        // Eigen::Quaternionf q;
-        // q = Eigen::AngleAxisf(el, Eigen::Vector3f::UnitY()) * Eigen::AngleAxisf(az, Eigen::Vector3f::UnitZ());
-        // quats.push_back(q);
+        Eigen::Quaternionf q;
+        Eigen::Vector3f axis;
+        axis << -sin(az), cos(az), 0.0f;
+        q = Eigen::AngleAxisf(-el, axis) * Eigen::AngleAxisf(az, Eigen::Vector3f::UnitZ());
+        // q = Eigen::AngleAxisf(az, Eigen::Vector3f::UnitZ()) * Eigen::AngleAxisf(el, Eigen::Vector3f::UnitY());
+        // q = Eigen::AngleAxisf(az, Eigen::Vector3f::UnitZ());
+        quats.push_back(q);
       }
     }
     // at top
