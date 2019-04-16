@@ -18,6 +18,7 @@ from moveit_msgs.srv import GetPositionIK
 from moveit_msgs.msg import PositionIKRequest
 from moveit_msgs.msg import RobotState
 from moveit_msgs.srv import GetPositionFK
+from moveit_msgs.srv import GetCartesianPath
 from moveit_msgs.srv import GetMotionPlan
 from moveit_msgs.msg import Grasp
 from moveit_msgs.msg import MotionPlanRequest, Constraints, JointConstraint, RobotTrajectory
@@ -66,8 +67,9 @@ class GraspDataCollection:
         self.joint_states = self.get_joint_states()
         self.object_height = 0.0  # [m]
         self.object_position = [0.3, 0.0, 0.76]
+        self.offset_by_phase = {'pre': 0.4, 'grasp': 0.0} #pre was 0.12
         self.phase = 'pre'
-        self.finger_joint_angles_grasp = 0.3
+        self.finger_joint_angles_grasp = 0.5
         self.finger_joint_angles_ungrasp = 0.1
         self.finger_joint_names = ['jaco_finger_joint_0',
                                    'jaco_finger_joint_2', 'jaco_finger_joint_4']
@@ -76,6 +78,7 @@ class GraspDataCollection:
                                        Image, self.hm_clbk,  queue_size=1)
         self.height_map = None  # TODO check for is None
         self.joint_states_ik_seed = self.generate_joint_states_ik_seed()
+        self.finger_pub = rospy.Publisher('/jaco/joint_control', JointState, queue_size=1)
 
         print 'Initialization complete'
 
@@ -149,8 +152,8 @@ class GraspDataCollection:
             res = req(self.object_name, '')
             print res.success
             height = res.pose.position.z
-            if self.verbose:
-                print 'Height: ', height
+            # if self.verbose:
+                # print 'Height: ', height
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
         return height
@@ -193,7 +196,8 @@ class GraspDataCollection:
             rs.joint_state.position = vals
             ik.ik_link_name = self.palm_link
             ik.robot_state = rs
-            ik.pose_stamped = self.generate_grasp_pose()
+            ik.pose_stamped = self.generate_grasp_pose(
+                self.offset_by_phase[phase])
             ik.timeout.secs = 3.0  # [s]
             ik.attempts = 100
             # print '\nIK message:', ik
@@ -231,19 +235,19 @@ class GraspDataCollection:
         print 'Finished retrieving joint states'
         return joint_states
 
-    def generate_grasp_pose(self):
+    def generate_grasp_pose(self, offset):
         if self.verbose:
             print 'Generating grasp pose'
         sig_pos = 0.0001  # [m] std dev for position
         x = np.random.normal(self.object_position[0], sig_pos)
         y = np.random.normal(self.object_position[1], sig_pos)
-        th = 0 # np.random.uniform(0.0, math.pi * 2.0)
+        th = 0  # np.random.uniform(0.0, math.pi * 2.0)
         # https://www.programcreek.com/python/example/70252/geometry_msgs.msg.PoseStamped
         ps = PoseStamped()
         ps.header.frame_id = "/" + self.reference_frame
         ps.pose.position.x = x
         ps.pose.position.y = y
-        ps.pose.position.z = self.get_object_height() + 0.18  # 0.24 0.18good 0.4
+        ps.pose.position.z = self.get_object_height() + 0.18 + offset  # 0.24 0.18good 0.4
         q = tf.transformations.quaternion_from_euler(
             math.pi, 0, th, axes='sxyz')
         ps.pose.orientation.x = q[0]
@@ -289,6 +293,56 @@ class GraspDataCollection:
         # http://docs.ros.org/api/actionlib/html/classactionlib_1_1simple__action__client_1_1SimpleActionClient.html
         # print client.get_state()
 
+    def move_from_pregrasp_to_grasp(self):
+        if self.verbose:
+            print 'Moving from pregrasp to grasp'
+        # Cartesian path
+        header = Header()
+        header.frame_id = "/" + self.reference_frame
+        start_state = RobotState()
+        start_state.joint_state.header.frame_id = "/" + self.reference_frame
+        names = []
+        vals = []
+        js = self.get_joint_states()
+        for name, val in js.items():
+            if name != self.joint_to_exclude:
+                names.append(name)
+                vals.append(val)
+        start_state.joint_state.name = names
+        start_state.joint_state.position = vals
+        group_name = self.planning_group_name
+        link_name = self.palm_link_eef
+        wp_start = self.get_eef_pose()
+        wp_end = self.get_eef_pose()
+        waypoints = [wp_start.pose, wp_end.pose]
+        print waypoints
+        jump_threshold = 10
+        max_step = 0.02
+        avoid_collisions = True
+        path_constraints = Constraints()
+        try:
+            req = rospy.ServiceProxy(
+                '/compute_cartesian_path', GetCartesianPath)
+            res = req(header, start_state, group_name, link_name, waypoints,
+                      max_step, jump_threshold, avoid_collisions, path_constraints)
+            traj = res.solution
+            print res
+        except rospy.ServiceException, e:
+            print "Service call failed: %s" % e
+
+        client = actionlib.SimpleActionClient(
+            self.joint_traj_action_topic, FollowJointTrajectoryAction)
+        client.wait_for_server()
+
+        # http://docs.ros.org/diamondback/api/control_msgs/html/index-msg.html
+        print "Moving to cartesian goal"
+        goal = FollowJointTrajectoryGoal()
+        goal.trajectory = traj.joint_trajectory
+        client.send_goal(goal)
+        client.wait_for_result(rospy.Duration.from_sec(15.0))
+        # http://docs.ros.org/api/actionlib/html/classactionlib_1_1simple__action__client_1_1SimpleActionClient.html
+        # print client.get_state()
+
     def pickup(self):
         js_closed = {}
         js_open = {}
@@ -313,15 +367,15 @@ class GraspDataCollection:
 
         jtp_c = JointTrajectoryPoint()
         jtp_c.positions = [angle_closed] * len(self.finger_joint_names)
-        jtp_c.effort = [100] * len(self.finger_joint_names)
+        # jtp_c.effort = [100] * len(self.finger_joint_names)
         jtp_c.time_from_start.secs = 1
         jtp_o = JointTrajectoryPoint()
         jtp_o.positions = [angle_open] * len(self.finger_joint_names)
-        jtp_o.effort = [100] * len(self.finger_joint_names)
+        # jtp_o.effort = [100] * len(self.finger_joint_names)
         jtp_o.time_from_start.secs = 1
 
-        pgpost.points = [jtp_o, jtp_o]
-        gpost.points = [jtp_c, jtp_c]
+        pgpost.points = [jtp_o]  # , jtp_o]
+        gpost.points = [jtp_c]  # , jtp_c]
 
         grasp = Grasp()
 
@@ -345,7 +399,7 @@ class GraspDataCollection:
         postgrretr.desired_distance = 0.15  # [m]
         postgrretr.min_distance = 0.02  # [m]
 
-        # grasp.pre_grasp_posture = pgpost
+        grasp.pre_grasp_posture = pgpost
         # grasp.grasp_posture = gpost
         grasp.grasp_pose = gp
         grasp.grasp_quality = 0.5
@@ -390,12 +444,18 @@ class GraspDataCollection:
         # grasp_goal.grasp_trajectory.points.append(pgpost.points[0])
         # grasp_goal.grasp_trajectory.points.append(gpost.points[0])
 
-
         # client = actionlib.SimpleActionClient(
         #     self.grasp_action_topic_jen, GraspAction)
         # client.wait_for_server()
         # # print goal
-        # client.send_goal(grasp_goal)        
+        # client.send_goal(grasp_goal)
+
+    def close_fingers(self):
+        js = JointState()
+        js.name = self.finger_joint_names
+        js.position = [self.finger_joint_angles_grasp] * 3
+        print js
+        self.finger_pub.publish(js)
 
     def save(self, height_map, ik_pre, height):
         if self.verbose:
@@ -411,10 +471,12 @@ def main(args):
     gdc.save_arm_home_state()
     while gdc.current_trial_no < gdc.total_num_trials:
         gdc.position_object()
-        height_map = gdc.height_map  # TODO make not None
-        gdc.pickup()
+        # height_map = gdc.height_map  # TODO make not None
+        # gdc.pickup()
         # gdc.execute_grasp_action('open')
-        # gdc.move_to_state(gdc.get_ik('lift'))
+        gdc.move_to_state(gdc.get_ik('pre'))
+        gdc.move_from_pregrasp_to_grasp()
+        gdc.close_fingers()
         # height = gdc.get_object_height()
         # gdc.execute_grasp_action('open')
         # gdc.save(height_map, ik_pre, height)
