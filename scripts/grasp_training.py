@@ -67,7 +67,7 @@ class GraspDataCollection:
         self.joint_states = self.get_joint_states()
         self.object_height = 0.0  # [m]
         self.object_position = [0.3, 0.0, 0.76]
-        self.offset_by_phase = {'pre': 0.4, 'grasp': 0.0} #pre was 0.12
+        self.offset_by_phase = {'pre': 0.1, 'grasp': 0.0} #pre was 0.12
         self.phase = 'pre'
         self.finger_joint_angles_grasp = 0.5
         self.finger_joint_angles_ungrasp = 0.1
@@ -315,7 +315,7 @@ class GraspDataCollection:
         wp_start = self.get_eef_pose()
         wp_end = self.get_eef_pose()
         waypoints = [wp_start.pose, wp_end.pose]
-        print waypoints
+        # print waypoints
         jump_threshold = 10
         max_step = 0.02
         avoid_collisions = True
@@ -343,119 +343,173 @@ class GraspDataCollection:
         # http://docs.ros.org/api/actionlib/html/classactionlib_1_1simple__action__client_1_1SimpleActionClient.html
         # print client.get_state()
 
-    def pickup(self):
-        js_closed = {}
-        js_open = {}
-
+    def move_from_grasp_to_raised(self):
         if self.verbose:
-            print 'Executing pickup action:'
-        for finger_joint_name in self.finger_joint_names:
-            angle_closed = self.finger_joint_angles_grasp
-            angle_open = self.finger_joint_angles_ungrasp
-            js_closed[finger_joint_name] = angle_closed
-            js_open[finger_joint_name] = angle_open
-
-        print js_closed.values
-        pgpost = JointTrajectory()
-        pgpost.header.frame_id = "/" + self.reference_frame
-        gpost = JointTrajectory()
-        gpost.header.frame_id = "/" + self.reference_frame
-
-        jt_grasp = JointTrajectory()
-        pgpost.joint_names = self.finger_joint_names
-        gpost.joint_names = self.finger_joint_names
-
-        jtp_c = JointTrajectoryPoint()
-        jtp_c.positions = [angle_closed] * len(self.finger_joint_names)
-        # jtp_c.effort = [100] * len(self.finger_joint_names)
-        jtp_c.time_from_start.secs = 1
-        jtp_o = JointTrajectoryPoint()
-        jtp_o.positions = [angle_open] * len(self.finger_joint_names)
-        # jtp_o.effort = [100] * len(self.finger_joint_names)
-        jtp_o.time_from_start.secs = 1
-
-        pgpost.points = [jtp_o]  # , jtp_o]
-        gpost.points = [jtp_c]  # , jtp_c]
-
-        grasp = Grasp()
-
-        gp = self.get_eef_pose()
-        print "eef pose: ", gp
-
-        pregrapp = GripperTranslation()
-        postgrretr = GripperTranslation()
-
-        v3s = Vector3Stamped()
-        v3s.header.frame_id = "/" + self.reference_frame
-        v3s.vector.z = -1.0
-        pregrapp.direction = v3s
-        pregrapp.desired_distance = 0.15  # [m]
-        pregrapp.min_distance = 0.02  # [m]
-
-        v3s = Vector3Stamped()
-        v3s.header.frame_id = "/" + self.reference_frame
-        v3s.vector.z = 1.0
-        postgrretr.direction = v3s
-        postgrretr.desired_distance = 0.15  # [m]
-        postgrretr.min_distance = 0.02  # [m]
-
-        grasp.pre_grasp_posture = pgpost
-        # grasp.grasp_posture = gpost
-        grasp.grasp_pose = gp
-        grasp.grasp_quality = 0.5
-        grasp.pre_grasp_approach = pregrapp
-        # grasp.post_grasp_retreat = postgrretr # activating this results in a cube-cube collision
-        grasp.max_contact_force = -1
-        grasp.allowed_touch_objects = [self.object_name]
-
-        goal = PickupGoal()
-        goal.support_surface_name = 'table_top'
-        goal.allow_gripper_support_collision = True
-        goal.minimize_object_distance = True
-        goal.target_name = self.object_name
-        goal.group_name = self.planning_group_name
-        goal.attached_object_touch_links = ['all']
-        # goal.allowed_touch_objects = [self.object_name]
-        goal.allowed_touch_objects = [self.object_name, 'table_top']
-        goal.end_effector = self.eef_link
-        goal.possible_grasps = [grasp]
-        goal.allowed_planning_time = 3.0  # [s]
-        # goal.planning_options.replan = True
-        # goal.planning_options.replan_attempts = 10
-
-        print goal
+            print 'Moving from grasp to raised'
+        # Cartesian path
+        header = Header()
+        header.frame_id = "/" + self.reference_frame
+        start_state = RobotState()
+        start_state.joint_state.header.frame_id = "/" + self.reference_frame
+        names = []
+        vals = []
+        js = self.get_joint_states()
+        for name, val in js.items():
+            if name != self.joint_to_exclude:
+                names.append(name)
+                vals.append(val)
+        start_state.joint_state.name = names
+        start_state.joint_state.position = vals
+        group_name = self.planning_group_name
+        link_name = self.palm_link_eef
+        wp_start = self.get_eef_pose()
+        wp_end = self.get_eef_pose()
+        wp_end.pose.position.z = 1.2
+        waypoints = [wp_start.pose, wp_end.pose]
+        # print waypoints
+        jump_threshold = 10
+        max_step = 0.02
+        avoid_collisions = False
+        path_constraints = Constraints()
+        try:
+            req = rospy.ServiceProxy(
+                '/compute_cartesian_path', GetCartesianPath)
+            res = req(header, start_state, group_name, link_name, waypoints,
+                      max_step, jump_threshold, avoid_collisions, path_constraints)
+            traj = res.solution
+            print res
+        except rospy.ServiceException, e:
+            print "Service call failed: %s" % e
 
         client = actionlib.SimpleActionClient(
-            self.grasp_action_topic, PickupAction)
+            self.joint_traj_action_topic, FollowJointTrajectoryAction)
         client.wait_for_server()
-        # print goal
+
+        # http://docs.ros.org/diamondback/api/control_msgs/html/index-msg.html
+        print "Moving to cartesian goal"
+        goal = FollowJointTrajectoryGoal()
+        goal.trajectory = traj.joint_trajectory
         client.send_goal(goal)
+        client.wait_for_result(rospy.Duration.from_sec(15.0))
+        # http://docs.ros.org/api/actionlib/html/classactionlib_1_1simple__action__client_1_1SimpleActionClient.html
+        # print client.get_state()        
 
-        # grasp_goal = GraspGoal()
-        # gd = GraspData()
-        # gd.id = 0
-        # gd.grasp = grasp
-        # gd.effector_link_name = 'jaco_6_hand_limb'
-        # grasp_goal.grasp = gd
-        # grasp_goal.is_grasp = True
-        # grasp_goal.use_custom_tolerances = False
-        # grasp_goal.grasp_trajectory.joint_names = self.finger_joint_names
-        # print pgpost.points[0]
-        # grasp_goal.grasp_trajectory.points.append(pgpost.points[0])
-        # grasp_goal.grasp_trajectory.points.append(gpost.points[0])
+    # def pickup(self):
+    #     js_closed = {}
+    #     js_open = {}
 
-        # client = actionlib.SimpleActionClient(
-        #     self.grasp_action_topic_jen, GraspAction)
-        # client.wait_for_server()
-        # # print goal
-        # client.send_goal(grasp_goal)
+    #     if self.verbose:
+    #         print 'Executing pickup action:'
+    #     for finger_joint_name in self.finger_joint_names:
+    #         angle_closed = self.finger_joint_angles_grasp
+    #         angle_open = self.finger_joint_angles_ungrasp
+    #         js_closed[finger_joint_name] = angle_closed
+    #         js_open[finger_joint_name] = angle_open
 
-    def close_fingers(self):
+    #     print js_closed.values
+    #     pgpost = JointTrajectory()
+    #     pgpost.header.frame_id = "/" + self.reference_frame
+    #     gpost = JointTrajectory()
+    #     gpost.header.frame_id = "/" + self.reference_frame
+
+    #     jt_grasp = JointTrajectory()
+    #     pgpost.joint_names = self.finger_joint_names
+    #     gpost.joint_names = self.finger_joint_names
+
+    #     jtp_c = JointTrajectoryPoint()
+    #     jtp_c.positions = [angle_closed] * len(self.finger_joint_names)
+    #     # jtp_c.effort = [100] * len(self.finger_joint_names)
+    #     jtp_c.time_from_start.secs = 1
+    #     jtp_o = JointTrajectoryPoint()
+    #     jtp_o.positions = [angle_open] * len(self.finger_joint_names)
+    #     # jtp_o.effort = [100] * len(self.finger_joint_names)
+    #     jtp_o.time_from_start.secs = 1
+
+    #     pgpost.points = [jtp_o]  # , jtp_o]
+    #     gpost.points = [jtp_c]  # , jtp_c]
+
+    #     grasp = Grasp()
+
+    #     gp = self.get_eef_pose()
+    #     print "eef pose: ", gp
+
+    #     pregrapp = GripperTranslation()
+    #     postgrretr = GripperTranslation()
+
+    #     v3s = Vector3Stamped()
+    #     v3s.header.frame_id = "/" + self.reference_frame
+    #     v3s.vector.z = -1.0
+    #     pregrapp.direction = v3s
+    #     pregrapp.desired_distance = 0.15  # [m]
+    #     pregrapp.min_distance = 0.02  # [m]
+
+    #     v3s = Vector3Stamped()
+    #     v3s.header.frame_id = "/" + self.reference_frame
+    #     v3s.vector.z = 1.0
+    #     postgrretr.direction = v3s
+    #     postgrretr.desired_distance = 0.15  # [m]
+    #     postgrretr.min_distance = 0.02  # [m]
+
+    #     grasp.pre_grasp_posture = pgpost
+    #     # grasp.grasp_posture = gpost
+    #     grasp.grasp_pose = gp
+    #     grasp.grasp_quality = 0.5
+    #     grasp.pre_grasp_approach = pregrapp
+    #     # grasp.post_grasp_retreat = postgrretr # activating this results in a cube-cube collision
+    #     grasp.max_contact_force = -1
+    #     grasp.allowed_touch_objects = [self.object_name]
+
+    #     goal = PickupGoal()
+    #     goal.support_surface_name = 'table_top'
+    #     goal.allow_gripper_support_collision = True
+    #     goal.minimize_object_distance = True
+    #     goal.target_name = self.object_name
+    #     goal.group_name = self.planning_group_name
+    #     goal.attached_object_touch_links = ['all']
+    #     # goal.allowed_touch_objects = [self.object_name]
+    #     goal.allowed_touch_objects = [self.object_name, 'table_top']
+    #     goal.end_effector = self.eef_link
+    #     goal.possible_grasps = [grasp]
+    #     goal.allowed_planning_time = 3.0  # [s]
+    #     # goal.planning_options.replan = True
+    #     # goal.planning_options.replan_attempts = 10
+
+    #     print goal
+
+    #     client = actionlib.SimpleActionClient(
+    #         self.grasp_action_topic, PickupAction)
+    #     client.wait_for_server()
+    #     # print goal
+    #     client.send_goal(goal)
+
+    #     # grasp_goal = GraspGoal()
+    #     # gd = GraspData()
+    #     # gd.id = 0
+    #     # gd.grasp = grasp
+    #     # gd.effector_link_name = 'jaco_6_hand_limb'
+    #     # grasp_goal.grasp = gd
+    #     # grasp_goal.is_grasp = True
+    #     # grasp_goal.use_custom_tolerances = False
+    #     # grasp_goal.grasp_trajectory.joint_names = self.finger_joint_names
+    #     # print pgpost.points[0]
+    #     # grasp_goal.grasp_trajectory.points.append(pgpost.points[0])
+    #     # grasp_goal.grasp_trajectory.points.append(gpost.points[0])
+
+    #     # client = actionlib.SimpleActionClient(
+    #     #     self.grasp_action_topic_jen, GraspAction)
+    #     # client.wait_for_server()
+    #     # # print goal
+    #     # client.send_goal(grasp_goal)
+
+    def actuate_fingers(self, action):
         js = JointState()
         js.name = self.finger_joint_names
-        js.position = [self.finger_joint_angles_grasp] * 3
-        print js
+        if action == 'close':
+            js.position = [self.finger_joint_angles_grasp] * 3
+        elif action == 'open':
+            js.position = [self.finger_joint_angles_ungrasp] * 3
         self.finger_pub.publish(js)
+        rospy.sleep(3)
 
     def save(self, height_map, ik_pre, height):
         if self.verbose:
@@ -476,7 +530,8 @@ def main(args):
         # gdc.execute_grasp_action('open')
         gdc.move_to_state(gdc.get_ik('pre'))
         gdc.move_from_pregrasp_to_grasp()
-        gdc.close_fingers()
+        gdc.actuate_fingers('close')
+        gdc.move_from_grasp_to_raised()
         # height = gdc.get_object_height()
         # gdc.execute_grasp_action('open')
         # gdc.save(height_map, ik_pre, height)
