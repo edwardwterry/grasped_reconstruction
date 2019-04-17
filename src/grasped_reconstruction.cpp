@@ -22,6 +22,7 @@ public:
     entropy_arrow_pub = n.advertise<visualization_msgs::MarkerArray>("entropy_arrows", 1);
     bb_pub = n.advertise<visualization_msgs::Marker>("bbox", 1);
     cf_pub = n.advertise<sensor_msgs::PointCloud2>("color_filtered", 1);
+    // nbv_pub = n.advertise<tf::StampedTransform>("nbv", 1);
     image_transport::ImageTransport it(n);
     hm_im_pub = it.advertise("height_map_image", 1);
     try
@@ -47,9 +48,10 @@ public:
   }
   ros::NodeHandle _n;
   ros::Subscriber pc_sub, gm_sub, occ_sub;
-  ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub, entropy_arrow_pub;
+  ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub, entropy_arrow_pub, nbv_pub;
   image_transport::Publisher hm_im_pub;
   tf::TransformListener listener;
+  tf::TransformBroadcaster broadcaster;
   tf::StampedTransform world_T_lens_link_tf, world_T_object_tf;
   int rMax, rMin, gMax, gMin, bMax, bMin;
   PointCloud combo_orig, orig_observed, orig_unobserved;
@@ -132,9 +134,14 @@ public:
       std::cout << "Publishing the combined observed and unobserved point cloud" << std::endl;
 
       publishBoundingBoxMarker();
-      Eigen::Vector4f best_view = calculateNextBestView(ipp);
+      Eigen::Quaternionf best_view = calculateNextBestView(ipp);
       // find transform to get to this view
-
+      tf::Quaternion q(best_view.x(), best_view.y(), best_view.z(), best_view.w());
+      tf::Transform t;
+      t.setRotation(q);
+      // tf::StampedTransform st;
+      // st.setData(t);
+      broadcaster.sendTransform(tf::StampedTransform(t, ros::Time::now(), "world", "nbv"));
       combo_made = true;
     }
   }
@@ -362,7 +369,7 @@ public:
     std::cout << "Appended and included point cloud with probabilities!" << std::endl;
   }
 
-  Eigen::Vector4f calculateNextBestView(const IndexedPointsWithProb &ipp)
+  Eigen::Quaternionf calculateNextBestView(const IndexedPointsWithProb &ipp)
   {
     std::cout << "Beginning calculation of next best view!" << std::endl;
     std::vector<float> view_entropy;
@@ -373,6 +380,8 @@ public:
     float entropy = 0.0f;
     divideBoundingBoxIntoVoxels();
     generateViewCandidates(views, quats);
+    int best_view_id;
+    int view_id = 0;
     for (const auto &v : views)
     {
       float e = calculateViewEntropy(v, ipp);
@@ -382,7 +391,9 @@ public:
       {
         best_view = v;
         entropy = e;
+        best_view_id = view_id;
       }
+      view_id++;
     }
 
     { // publish rviz arrows
@@ -419,7 +430,7 @@ public:
       }
       entropy_arrow_pub.publish(ma);
     }
-    return best_view;
+    return quats[best_view_id];
   }
 
   float calculateViewEntropy(const Eigen::Vector4f &origin, const IndexedPointsWithProb &ipp)
@@ -536,7 +547,7 @@ public:
       auto it_prob = cell_occupancy_prob.find(gridCoordToVoxelIndex(v));
       ROS_ASSERT(it_prob != cell_occupancy_prob.end());
       float p = it_prob->second;
-      if (p > 0.8)
+      if (p > 0.6)
         break;
       entropy += -p * log(p) - (1.0f - p) * log(1.0f - p);
     }
@@ -793,16 +804,16 @@ public:
         quats.push_back(q);
       }
     }
-    // at top
-    Eigen::Vector4f v;
-    v[0] = world_T_object_tf.getOrigin().getX();
-    v[1] = world_T_object_tf.getOrigin().getY();
-    v[2] = VIEW_RADIUS * sin(M_PI / 2.0f) + world_T_object_tf.getOrigin().getZ();
-    v[3] = 0.0f;
-    views.push_back(v);
-    // at bottom
-    v[2] = VIEW_RADIUS * sin(-M_PI / 2.0f) + world_T_object_tf.getOrigin().getZ();
-    views.push_back(v);
+    // // at top
+    // Eigen::Vector4f v;
+    // v[0] = world_T_object_tf.getOrigin().getX();
+    // v[1] = world_T_object_tf.getOrigin().getY();
+    // v[2] = VIEW_RADIUS * sin(M_PI / 2.0f) + world_T_object_tf.getOrigin().getZ();
+    // v[3] = 0.0f;
+    // views.push_back(v);
+    // // at bottom
+    // v[2] = VIEW_RADIUS * sin(-M_PI / 2.0f) + world_T_object_tf.getOrigin().getZ();
+    // views.push_back(v);
   }
 };
 
