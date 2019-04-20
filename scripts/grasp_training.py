@@ -83,6 +83,7 @@ class GraspDataCollection:
                                        Image, self.hm_clbk,  queue_size=1)
         self.height_map = None  # TODO check for is None
         self.joint_states_ik_seed = self.generate_joint_states_ik_seed()
+        self.joint_states_presentation_pose = self.generate_joint_states_presentation_pose()
         self.finger_pub = rospy.Publisher('/jaco/joint_control', JointState, queue_size=1)
         self.eef_pose_at_grasp = Pose()
         self.tf_listener = TransformListener()
@@ -140,7 +141,7 @@ class GraspDataCollection:
         N_T_O_m = np.dot(N_T_O_t, N_T_O_r)
         print 'N_T_O_m\n', N_T_O_m
 
-        C_T_L_t = tf.transformations.translation_matrix([0.0, 0.0, 0.25, 1.0])
+        C_T_L_t = tf.transformations.translation_matrix([0.0, 0.0, 0.1, 1.0])
         C_T_L_r = tf.transformations.quaternion_matrix(N_T_O[1])
         C_T_L_m = np.dot(C_T_L_t, C_T_L_r)
         print 'C_T_L_m\n', C_T_L_m
@@ -162,28 +163,25 @@ class GraspDataCollection:
         print 'O_T_W_m\n', O_T_W_m
 
         # E_T_W
-        # L_T_W_m = np.dot(L_T_O_m, O_T_W_m)
         L_T_W_m = np.dot(O_T_W_m, L_T_O_m)
         print 'L_T_W_m\n', L_T_W_m
-        # C_T_W_m = np.dot(C_T_L_m, L_T_W_m)
         C_T_W_m = np.dot(L_T_W_m, C_T_L_m)
         print 'C_T_W_m\n', C_T_W_m
-        # E_T_W_m = np.dot(E_T_C_m, C_T_W_m)
         E_T_W_m = np.dot(C_T_W_m, E_T_C_m)
         E_T_W_t = tf.transformations.translation_from_matrix(E_T_W_m)
-        E_T_W_r = tf.transformations.quaternion_from_matrix(E_T_W_m)
+        E_T_W_r = tf.transformations.quaternion_from_matrix([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]])
 
         print 'E_T_W_m\n', E_T_W_m
 
         ps = PoseStamped()
         ps.header.frame_id = "/" + self.reference_frame
-        ps.pose.position.x = E_T_W_t[0]
-        ps.pose.position.y = E_T_W_t[1]
-        ps.pose.position.z = E_T_W_t[2]
-        ps.pose.orientation.x = E_T_W_r[0]
-        ps.pose.orientation.y = E_T_W_r[1]
-        ps.pose.orientation.z = E_T_W_r[2]
-        ps.pose.orientation.w = E_T_W_r[3]
+        ps.pose.position.x = .32455 # E_T_W_t[0]
+        ps.pose.position.y = 0.10394 # E_T_W_t[1]
+        ps.pose.position.z = 1.0798 # E_T_W_t[2]
+        ps.pose.orientation.x = -0.541971 #E_T_W_r[0]
+        ps.pose.orientation.y = 0.32541 #E_T_W_r[1]
+        ps.pose.orientation.z = 0.60627 #E_T_W_r[2]
+        ps.pose.orientation.w = 0.48251 #E_T_W_r[3]
         return self.get_ik('present', ps)
 
     def hm_clbk(self, msg):
@@ -278,7 +276,11 @@ class GraspDataCollection:
             rs.joint_state.header.frame_id = "/" + self.reference_frame
             names = []
             vals = []
-            for name, val in self.joint_states_ik_seed.items():
+            if phase == 'present':
+                badly_named_var = self.joint_states_presentation_pose
+            else:
+                badly_named_var = self.joint_states_ik_seed
+            for name, val in badly_named_var.items():
                 if name not in self.joints_to_exclude:
                     names.append(name)
                     vals.append(val)
@@ -293,14 +295,16 @@ class GraspDataCollection:
             else: # for the presentation pose
                 ik.pose_stamped = eef_pose
             ik.timeout.secs = 3.0  # [s]
-            ik.attempts = 100
-            # print '\nIK message:', ik
+            ik.attempts = 10
+            print '\nIK message:', ik
             res = req(ik)
+            print res
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
         js = {}
         for name, val in zip(res.solution.joint_state.name, res.solution.joint_state.position):
             js[name] = val
+        print js
         return js
 
     def load_joint_properties(self):
@@ -499,7 +503,7 @@ class GraspDataCollection:
         elif action == 'open':
             js.position = [self.finger_joint_angles_ungrasp] * 3
         self.finger_pub.publish(js)
-        rospy.sleep(5)
+        rospy.sleep(3)
     
     def save_eef_pose_at_grasp(self):
         self.tf_listener.waitForTransform("/" + self.reference_frame, "/" + self.palm_link_eef, rospy.Time(0), rospy.Duration(4.0))
