@@ -28,6 +28,8 @@ find_package(catkin REQUIRED
     OpenCV REQUIRED
     image_transport
     grasp_execution_msgs
+    tf2_ros
+    tf2
     )
 find_package (PCL REQUIRED COMPONENTS)
 
@@ -131,6 +133,9 @@ catkin_package(
     grid_map_msgs
     cv_bridge
     grasp_execution_msgs
+    tf2_geometry_msgs
+    tf2_ros
+    tf2
 )
 
 ###########

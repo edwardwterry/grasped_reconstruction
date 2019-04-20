@@ -52,7 +52,8 @@ public:
   image_transport::Publisher hm_im_pub;
   tf::TransformListener listener;
   tf::TransformBroadcaster broadcaster;
-  tf::StampedTransform world_T_lens_link_tf, world_T_object_tf;
+  tf::StampedTransform world_T_lens_link_tf, world_T_object_tf, O_T_W;
+  tf2_ros::StaticTransformBroadcaster static_broadcaster;
   int rMax, rMin, gMax, gMin, bMax, bMin;
   PointCloud combo_orig, orig_observed, orig_unobserved;
   bool orig_observed_set = false;
@@ -141,9 +142,60 @@ public:
       t.setRotation(q);
       // tf::StampedTransform st;
       // st.setData(t);
-      broadcaster.sendTransform(tf::StampedTransform(t, ros::Time::now(), "world", "nbv"));
+      tf::Transform n_T_w(t * O_T_W);
+      geometry_msgs::TransformStamped static_transformStamped;
+
+      static_transformStamped.header.stamp = ros::Time::now();
+      static_transformStamped.header.frame_id = "world";
+      static_transformStamped.child_frame_id = "nbv";
+      static_transformStamped.transform.translation.x = n_T_w.getOrigin().x();
+      static_transformStamped.transform.translation.y = n_T_w.getOrigin().y();
+      static_transformStamped.transform.translation.z = n_T_w.getOrigin().z();
+      static_transformStamped.transform.rotation.x = n_T_w.getRotation()[0];
+      static_transformStamped.transform.rotation.y = n_T_w.getRotation()[1];
+      static_transformStamped.transform.rotation.z = n_T_w.getRotation()[2];
+      static_transformStamped.transform.rotation.w = n_T_w.getRotation()[3];
+      static_broadcaster.sendTransform(static_transformStamped);
       combo_made = true;
     }
+  }
+
+  bool calculateVolumeOccludedByFingers()
+  {
+    // https://github.com/PointCloudLibrary/pcl/issues/1657
+    // pcl::ConvexHull<PointXYZ> ch;
+    // tf::StampedTransform b_th, b_in, b_pi;
+    // try
+    // {
+    //   ros::Time now = ros::Time::now();
+    //   listener.waitForTransform("/jaco_fingers_base_link", "/jaco_9_finger_thumb",
+    //                             now, ros::Duration(3.0));
+    //   listener.lookupTransform("/jaco_fingers_base_link", "/jaco_9_finger_thumb",
+    //                            now, b_th);
+    //   listener.waitForTransform("/jaco_fingers_base_link", "/jaco_9_finger_index",
+    //                             now, ros::Duration(3.0));
+    //   listener.lookupTransform("/jaco_fingers_base_link", "/jaco_9_finger_index",
+    //                            now, b_in);
+    //   listener.waitForTransform("/jaco_fingers_base_link", "/jaco_9_finger_pinkie",
+    //                             now, ros::Duration(3.0));
+    //   listener.lookupTransform("/jaco_fingers_base_link", "/jaco_9_finger_pinkie",
+    //                            now, b_pi);
+    // }
+    // catch (tf::TransformException ex)
+    // {
+    //   ROS_ERROR("%s", ex.what());
+    // }
+    // PointCloud::Ptr finger_occlusion_points;
+    // pcl::PointXYZ b(0.0f, 0.0f, 0.0f);
+    // finger_occlusion_points->push_back(pcl::PointXYZ(0.0f, 0.0f, 0.0f));
+    // finger_occlusion_points->push_back(pcl::PointXYZ(b_th.getOrigin().x(), b_th.getOrigin().y(), b_th.getOrigin().z()));
+    // finger_occlusion_points->push_back(pcl::PointXYZ(b_in.getOrigin().x(), b_in.getOrigin().y(), b_in.getOrigin().z()));
+    // finger_occlusion_points->push_back(pcl::PointXYZ(b_pi.getOrigin().x(), b_pi.getOrigin().y(), b_pi.getOrigin().z()));
+    // std::vector<pcl::Vertices> hullPolygons;
+    // pcl::CropHull<pcl::PointXYZ> cropHullFilter;
+    // ch.reconstruct(*finger_occlusion_points, hullPolygons);
+    // cropHullFilter.setHullIndices(hullPolygons);
+    // cropHullFilter.setHullCloud(finger_occlusion_points);
   }
 
   void publishBoundingBoxMarker()
@@ -169,6 +221,33 @@ public:
     marker.color.b = 0.0;
     bb_pub.publish(marker);
     std::cout << "Published bounding box marker!" << std::endl;
+    // tf::TransformStamped
+    try
+    {
+      ros::Time now = ros::Time::now();
+      listener.waitForTransform("/world", "/cube1",
+                                now, ros::Duration(3.0));
+      listener.lookupTransform("/world", "/cube1",
+                               now, O_T_W);
+    }
+    catch (tf::TransformException ex)
+    {
+      ROS_ERROR("%s", ex.what());
+    }
+    tf::Transform t(O_T_W);
+    geometry_msgs::TransformStamped static_transformStamped;
+
+    static_transformStamped.header.stamp = ros::Time::now();
+    static_transformStamped.header.frame_id = "world";
+    static_transformStamped.child_frame_id = "orig_bb";
+    static_transformStamped.transform.translation.x = t.getOrigin().x();
+    static_transformStamped.transform.translation.y = t.getOrigin().y();
+    static_transformStamped.transform.translation.z = t.getOrigin().z();
+    static_transformStamped.transform.rotation.x = t.getRotation()[0];
+    static_transformStamped.transform.rotation.y = t.getRotation()[1];
+    static_transformStamped.transform.rotation.z = t.getRotation()[2];
+    static_transformStamped.transform.rotation.w = t.getRotation()[3];
+    static_broadcaster.sendTransform(static_transformStamped);
   }
 
   void pcClbk(const sensor_msgs::PointCloud2ConstPtr &msg)
