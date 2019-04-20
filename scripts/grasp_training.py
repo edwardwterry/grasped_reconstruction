@@ -138,13 +138,38 @@ class GraspDataCollection:
         N_T_O = self.tf_listener.lookupTransform("/" + self.orig_bb, "/" + self.nbv, rospy.Time(0))
         N_T_O_t = tf.transformations.translation_matrix(N_T_O[0])
         N_T_O_r = tf.transformations.quaternion_matrix(N_T_O[1])
+        # N_T_O_r = tf.transformations.quaternion_matrix([0, 0, 0, 1])
         N_T_O_m = np.dot(N_T_O_t, N_T_O_r)
         print 'N_T_O_m\n', N_T_O_m
+         
+        # # C_T_L = C_T_P * P_T_L
+        # prime
+        # C_T_P_t = tf.transformations.translation_matrix([0, 0, 0, 1])
+        # C_T_P_t = tf.transformations.quaternion_matrix([-0.5, -0.5, 0.5, 0.5])
+        # C_T_P_m = np.dot(C_T_P_t, C_T_P_t)
 
-        C_T_L_t = tf.transformations.translation_matrix([0.0, 0.0, 0.1, 1.0])
-        C_T_L_r = tf.transformations.quaternion_matrix(N_T_O[1])
-        C_T_L_m = np.dot(C_T_L_t, C_T_L_r)
+        # P_T_L_t = tf.transformations.translation_matrix([0.0, 0, 0.3, 1.0])
+        # P_T_L_r = tf.transformations.quaternion_matrix(N_T_O[1])
+        # # P_T_L_r = tf.transformations.quaternion_matrix([0, 0, 0, 1])
+        # P_T_L_m = np.dot(P_T_L_t, P_T_L_r)
+        # C_T_L_m = np.dot(P_T_L_m, C_T_P_m)
+        # print 'C_T_L_m\n', C_T_L_m
+        # end prime
+
+        # alternative:
+        C_T_P_t = tf.transformations.translation_matrix([0, 0, 0, 1])
+        C_T_P_r = tf.transformations.quaternion_matrix(N_T_O[1])
+        C_T_P_m = np.dot(C_T_P_t, C_T_P_r)
+        print 'C_T_P_m\n', C_T_P_m
+
+        P_T_L_t = tf.transformations.translation_matrix([0.0, 0, 0.3, 1.0])
+        P_T_L_r = tf.transformations.quaternion_matrix([-0.5, -0.5, 0.5, -0.5]) # point nbv x axis towards camera
+        # P_T_L_r = tf.transformations.quaternion_matrix([0, 0, 0, 1])
+        P_T_L_m = np.dot(P_T_L_t, P_T_L_r)
+        print 'P_T_L_m\n', P_T_L_m
+        C_T_L_m = np.dot(P_T_L_m, C_T_P_m)
         print 'C_T_L_m\n', C_T_L_m
+        # end alternative
 
         # L_T_O 
         self.tf_listener.waitForTransform("/" + self.orig_bb, "/" + self.lens_link, rospy.Time(0), rospy.Duration(3.0))
@@ -169,19 +194,20 @@ class GraspDataCollection:
         print 'C_T_W_m\n', C_T_W_m
         E_T_W_m = np.dot(C_T_W_m, E_T_C_m)
         E_T_W_t = tf.transformations.translation_from_matrix(E_T_W_m)
-        E_T_W_r = tf.transformations.quaternion_from_matrix([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]])
+        # E_T_W_r = tf.transformations.quaternion_from_matrix([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]])
+        E_T_W_r = tf.transformations.quaternion_from_matrix(E_T_W_m)
 
         print 'E_T_W_m\n', E_T_W_m
 
         ps = PoseStamped()
         ps.header.frame_id = "/" + self.reference_frame
-        ps.pose.position.x = .32455 # E_T_W_t[0]
-        ps.pose.position.y = 0.10394 # E_T_W_t[1]
-        ps.pose.position.z = 1.0798 # E_T_W_t[2]
-        ps.pose.orientation.x = -0.541971 #E_T_W_r[0]
-        ps.pose.orientation.y = 0.32541 #E_T_W_r[1]
-        ps.pose.orientation.z = 0.60627 #E_T_W_r[2]
-        ps.pose.orientation.w = 0.48251 #E_T_W_r[3]
+        ps.pose.position.x = E_T_W_t[0]#.32455 # E_T_W_t[0]
+        ps.pose.position.y = E_T_W_t[1]#0.10394 # E_T_W_t[1]
+        ps.pose.position.z = E_T_W_t[2]#1.0798 # E_T_W_t[2]
+        ps.pose.orientation.x = E_T_W_r[0]#-0.541971 #E_T_W_r[0]
+        ps.pose.orientation.y = E_T_W_r[1]#0.32541 #E_T_W_r[1]
+        ps.pose.orientation.z = E_T_W_r[2]#0.60627 #E_T_W_r[2]
+        ps.pose.orientation.w = E_T_W_r[3]#0.48251 #E_T_W_r[3]
         return self.get_ik('present', ps)
 
     def hm_clbk(self, msg):
