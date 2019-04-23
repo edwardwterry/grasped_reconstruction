@@ -55,7 +55,7 @@ public:
   tf::StampedTransform world_T_lens_link_tf, world_T_object_tf, O_T_W;
   tf2_ros::StaticTransformBroadcaster static_broadcaster;
   int rMax, rMin, gMax, gMin, bMax, bMin;
-  PointCloud combo_orig, orig_observed, orig_unobserved;
+  PointCloud combo_orig, orig_observed, orig_unobserved, combo_curr;
   bool orig_observed_set = false;
   bool orig_unobserved_set = false;
   int NUM_AZIMUTH_POINTS = 8;
@@ -135,6 +135,12 @@ public:
       std::cout << "Publishing the combined observed and unobserved point cloud" << std::endl;
 
       publishBoundingBoxMarker();
+      for (auto it = ipp.begin(); it != ipp.end(); it++)
+      {
+        combo_orig.push_back(it->second.first);
+      }
+      combo_curr = combo_orig;
+      calculateVolumeOccludedByFingers(combo_curr);
       Eigen::Quaternionf best_view = calculateNextBestView(ipp);
       // find transform to get to this view
       tf::Quaternion q(best_view.x(), best_view.y(), best_view.z(), best_view.w());
@@ -160,42 +166,85 @@ public:
     }
   }
 
-  bool calculateVolumeOccludedByFingers()
+  void calculateVolumeOccludedByFingers(const PointCloud &voxel_grid)
   {
+    // std::cout<<"VG size: "<<voxel_grid.size()<<std::endl;
     // https://github.com/PointCloudLibrary/pcl/issues/1657
-    // pcl::ConvexHull<PointXYZ> ch;
-    // tf::StampedTransform b_th, b_in, b_pi;
-    // try
-    // {
-    //   ros::Time now = ros::Time::now();
-    //   listener.waitForTransform("/jaco_fingers_base_link", "/jaco_9_finger_thumb",
-    //                             now, ros::Duration(3.0));
-    //   listener.lookupTransform("/jaco_fingers_base_link", "/jaco_9_finger_thumb",
-    //                            now, b_th);
-    //   listener.waitForTransform("/jaco_fingers_base_link", "/jaco_9_finger_index",
-    //                             now, ros::Duration(3.0));
-    //   listener.lookupTransform("/jaco_fingers_base_link", "/jaco_9_finger_index",
-    //                            now, b_in);
-    //   listener.waitForTransform("/jaco_fingers_base_link", "/jaco_9_finger_pinkie",
-    //                             now, ros::Duration(3.0));
-    //   listener.lookupTransform("/jaco_fingers_base_link", "/jaco_9_finger_pinkie",
-    //                            now, b_pi);
-    // }
-    // catch (tf::TransformException ex)
-    // {
-    //   ROS_ERROR("%s", ex.what());
-    // }
-    // PointCloud::Ptr finger_occlusion_points;
+    pcl::CropHull<pcl::PointXYZ> cropHullFilter;
+    boost::shared_ptr<PointCloud> hullCloud(new PointCloud());
+    boost::shared_ptr<PointCloud> hullPoints(new PointCloud());
+    std::vector<pcl::Vertices> hullPolygons;
+
+    tf::StampedTransform b_th, b_in, b_pi, w_b;
+    float finger_scale_factor = 1.3f;
+    ros::Duration(20).sleep();
+    try
+    {
+      ros::Time now = ros::Time::now();
+      listener.waitForTransform("/jaco_fingers_base_link", "/jaco_9_finger_thumb_tip",
+                                now, ros::Duration(3.0));
+      listener.lookupTransform("/jaco_fingers_base_link", "/jaco_9_finger_thumb_tip",
+                               now, b_th);
+      listener.waitForTransform("/jaco_fingers_base_link", "/jaco_9_finger_index_tip",
+                                now, ros::Duration(3.0));
+      listener.lookupTransform("/jaco_fingers_base_link", "/jaco_9_finger_index_tip",
+                               now, b_in);
+      listener.waitForTransform("/jaco_fingers_base_link", "/jaco_9_finger_pinkie_tip",
+                                now, ros::Duration(3.0));
+      listener.lookupTransform("/jaco_fingers_base_link", "/jaco_9_finger_pinkie_tip",
+                               now, b_pi);
+      listener.waitForTransform("/world", "/jaco_fingers_base_link",
+                                now, ros::Duration(3.0));
+      listener.lookupTransform("/world", "/jaco_fingers_base_link",
+                               now, w_b);
+    }
+    catch (tf::TransformException ex)
+    {
+      ROS_ERROR("%s", ex.what());
+    }
+    PointCloud::Ptr finger_occlusion_points;
     // pcl::PointXYZ b(0.0f, 0.0f, 0.0f);
-    // finger_occlusion_points->push_back(pcl::PointXYZ(0.0f, 0.0f, 0.0f));
-    // finger_occlusion_points->push_back(pcl::PointXYZ(b_th.getOrigin().x(), b_th.getOrigin().y(), b_th.getOrigin().z()));
-    // finger_occlusion_points->push_back(pcl::PointXYZ(b_in.getOrigin().x(), b_in.getOrigin().y(), b_in.getOrigin().z()));
-    // finger_occlusion_points->push_back(pcl::PointXYZ(b_pi.getOrigin().x(), b_pi.getOrigin().y(), b_pi.getOrigin().z()));
-    // std::vector<pcl::Vertices> hullPolygons;
-    // pcl::CropHull<pcl::PointXYZ> cropHullFilter;
-    // ch.reconstruct(*finger_occlusion_points, hullPolygons);
-    // cropHullFilter.setHullIndices(hullPolygons);
-    // cropHullFilter.setHullCloud(finger_occlusion_points);
+    hullCloud->push_back(pcl::PointXYZ(w_b.getOrigin().x(), w_b.getOrigin().y(), w_b.getOrigin().z()));
+    hullCloud->push_back(pcl::PointXYZ(-b_th.getOrigin().x()*finger_scale_factor + w_b.getOrigin().x(), -b_th.getOrigin().y()*finger_scale_factor + w_b.getOrigin().y(), -b_th.getOrigin().z()*finger_scale_factor + w_b.getOrigin().z()));
+    hullCloud->push_back(pcl::PointXYZ(-b_in.getOrigin().x()*finger_scale_factor + w_b.getOrigin().x(), -b_in.getOrigin().y()*finger_scale_factor + w_b.getOrigin().y(), -b_in.getOrigin().z()*finger_scale_factor + w_b.getOrigin().z()));
+    hullCloud->push_back(pcl::PointXYZ(-b_pi.getOrigin().x()*finger_scale_factor + w_b.getOrigin().x(), -b_pi.getOrigin().y()*finger_scale_factor + w_b.getOrigin().y(), -b_pi.getOrigin().z()*finger_scale_factor + w_b.getOrigin().z()));
+    std::cout << "Building convex hull from these points: " << std::endl;
+    for (const auto &p : *hullCloud)
+    {
+      std::cout << p << std::endl;
+    }
+
+    // setup hull filter
+    pcl::ConvexHull<pcl::PointXYZ> cHull;
+    cHull.setInputCloud(hullCloud);
+    cHull.reconstruct(*hullPoints, hullPolygons);
+    std::cout<<"Created convex hull!"<<std::endl;
+
+    cropHullFilter.setHullIndices(hullPolygons);
+    cropHullFilter.setHullCloud(hullPoints);
+    cropHullFilter.setDim(3);            // if you uncomment this, it will work
+    cropHullFilter.setCropOutside(true); // this will remove points inside the hull
+
+    // create point cloud
+    boost::shared_ptr<PointCloud> pc(new PointCloud());
+
+    // // a point inside the hull
+    // for (size_t i = 0; i < voxel_grid.size(); ++i)
+    // {
+    //   std::cout<<voxel_grid[i]<<std::endl;
+    //   pc->push_back(voxel_grid[i]);
+    // }
+
+    // for (size_t i = 0; i < pc->size(); ++i)
+    // {
+    //   std::cout << (*pc)[i] << std::endl;
+    // }
+
+    //filter points
+    cropHullFilter.setInputCloud(pc);
+    boost::shared_ptr<PointCloud> filtered(new PointCloud());
+    cropHullFilter.filter(*filtered);
+    std::cout << "Proportion occluded by fingers: " << float(filtered->size()) / float(voxel_grid.size()) << std::endl;
   }
 
   void publishBoundingBoxMarker()
@@ -502,11 +551,11 @@ public:
         marker.color.b = 0.0;
         ma.markers.push_back(marker);
       }
-      while (entropy_arrow_pub.getNumSubscribers() < 1)
-      {
-        std::cout << "Waiting for arrow subscribers to connect..." << std::endl;
-        ros::Duration(1.0).sleep();
-      }
+      // while (entropy_arrow_pub.getNumSubscribers() < 1)
+      // {
+      //   std::cout << "Waiting for arrow subscribers to connect..." << std::endl;
+      //   ros::Duration(1.0).sleep();
+      // }
       entropy_arrow_pub.publish(ma);
     }
     return quats[best_view_id];
