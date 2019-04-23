@@ -85,10 +85,11 @@ class GraspDataCollection:
         self.joint_states_ik_seed = self.generate_joint_states_ik_seed()
         self.joint_states_presentation_pose = self.generate_joint_states_presentation_pose()
         self.finger_pub = rospy.Publisher('/jaco/joint_control', JointState, queue_size=1)
-        self.joint_states_at_grasp = JointState()
+        self.joint_states_at_pre = JointState()
         self.eef_height_at_grasp = 0.0
         self.tf_listener = TransformListener()
         self.tf_broadcaster = TransformBroadcaster()
+        self.grasp_theta = 0.0
 
         print 'Initialization complete'
 
@@ -317,15 +318,14 @@ class GraspDataCollection:
             ik.ik_link_name = self.palm_link
             ik.robot_state = rs
             if eef_pose is None: # just for the grasp
-                ik.pose_stamped = self.generate_grasp_pose(
-                    self.offset_by_phase[phase])
+                ik.pose_stamped = self.generate_grasp_pose(phase)
             else: # for the presentation pose
                 ik.pose_stamped = eef_pose
             ik.timeout.secs = 3.0  # [s]
             ik.attempts = 10
-            print '\nIK message:', ik
+            # print '\nIK message:', ik
             res = req(ik)
-            print res
+            # print res
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
         js = {}
@@ -360,13 +360,16 @@ class GraspDataCollection:
         print 'Finished retrieving joint states'
         return joint_states
 
-    def generate_grasp_pose(self, offset):
+    def generate_grasp_pose(self, phase):
+        offset = self.offset_by_phase[phase]
         if self.verbose:
             print 'Generating grasp pose'
         sig_pos = 0.0001  # [m] std dev for position
         x = np.random.normal(self.object_position[0], sig_pos)
         y = np.random.normal(self.object_position[1], sig_pos)
-        th = 0  # np.random.uniform(0.0, math.pi * 2.0)
+        if phase == 'pre':
+            th = np.random.uniform(0.0, math.pi * 2.0)
+            self.grasp_theta = th
         # https://www.programcreek.com/python/example/70252/geometry_msgs.msg.PoseStamped
         ps = PoseStamped()
         ps.header.frame_id = "/" + self.reference_frame
@@ -374,7 +377,7 @@ class GraspDataCollection:
         ps.pose.position.y = y
         ps.pose.position.z = self.get_object_height() + 0.18 + offset  # 0.24 0.18good 0.4
         q = tf.transformations.quaternion_from_euler(
-            math.pi, 0, th, axes='sxyz')
+            math.pi, 0, self.grasp_theta, axes='sxyz')
         ps.pose.orientation.x = q[0]
         ps.pose.orientation.y = q[1]
         ps.pose.orientation.z = q[2]
@@ -584,8 +587,8 @@ class GraspDataCollection:
         self.finger_pub.publish(js)
         rospy.sleep(3)
     
-    def save_joint_states_at_grasp(self):
-        self.joint_states_at_grasp = self.get_joint_states()
+    def save_joint_states_at_pre(self):
+        self.joint_states_at_pre = self.get_joint_states()
         # self.tf_listener.waitForTransform("/" + self.reference_frame, "/" + self.palm_link_eef, rospy.Time(0), rospy.Duration(4.0))
         # tf = self.tf_listener.lookupTransform("/" + self.reference_frame, "/" + self.palm_link_eef, rospy.Time(0))
 
@@ -620,14 +623,16 @@ def main(args):
         # gdc.pickup()
         # gdc.execute_grasp_action('open')
         gdc.move_to_state(gdc.get_ik('pre'))
+        gdc.save_joint_states_at_pre()
+        rospy.sleep(2)
         gdc.move_from_pregrasp_to_grasp(False)
-        gdc.save_joint_states_at_grasp()
+        rospy.sleep(2)
         gdc.actuate_fingers('close')
         gdc.move_from_grasp_to_raised()
         # gdc.move_to_state(gdc.generate_joint_states_presentation_pose())
         gdc.move_to_state(gdc.generate_nbv_pose())
         rospy.sleep(2)
-        gdc.move_to_state(gdc.get_ik('pre'))
+        gdc.move_to_state(gdc.joint_states_at_pre)
         rospy.sleep(2)
         gdc.move_from_preplace_to_place()
         rospy.sleep(2)
@@ -641,7 +646,7 @@ def main(args):
         # gdc.execute_grasp_action('open')
         # gdc.save(height_map, ik_pre, height)
         # gdc.increment_current_trial_no()
-        # gdc.return_arm_home()
+        gdc.return_arm_home()
 
         rospy.spin()
         if rospy.is_shutdown():
