@@ -85,7 +85,8 @@ class GraspDataCollection:
         self.joint_states_ik_seed = self.generate_joint_states_ik_seed()
         self.joint_states_presentation_pose = self.generate_joint_states_presentation_pose()
         self.finger_pub = rospy.Publisher('/jaco/joint_control', JointState, queue_size=1)
-        self.eef_pose_at_grasp = Pose()
+        self.joint_states_at_grasp = JointState()
+        self.eef_height_at_grasp = 0.0
         self.tf_listener = TransformListener()
         self.tf_broadcaster = TransformBroadcaster()
 
@@ -330,7 +331,7 @@ class GraspDataCollection:
         js = {}
         for name, val in zip(res.solution.joint_state.name, res.solution.joint_state.position):
             js[name] = val
-        print js
+        # print js
         return js
 
     def load_joint_properties(self):
@@ -440,7 +441,7 @@ class GraspDataCollection:
         wp_start = self.get_eef_pose()
         wp_end = self.get_eef_pose()
         if second:
-            wp_end.pose.position.z = 0.9
+            wp_end.pose.position.z = self.get_object_height() + 0.18#0.9
         waypoints = [wp_start.pose, wp_end.pose]
         # print waypoints
         jump_threshold = 10
@@ -521,29 +522,82 @@ class GraspDataCollection:
         # http://docs.ros.org/api/actionlib/html/classactionlib_1_1simple__action__client_1_1SimpleActionClient.html
         # print client.get_state()        
 
+    def move_from_preplace_to_place(self):
+        if self.verbose:
+            print 'Moving from preplace to place'
+        # Cartesian path
+        header = Header()
+        header.frame_id = "/" + self.reference_frame
+        start_state = RobotState()
+        start_state.joint_state.header.frame_id = "/" + self.reference_frame
+        names = []
+        vals = []
+        js = self.get_joint_states()
+        for name, val in js.items():
+            if name not in self.joints_to_exclude:
+                names.append(name)
+                vals.append(val)
+        start_state.joint_state.name = names
+        start_state.joint_state.position = vals
+        group_name = self.planning_group_name
+        link_name = self.palm_link_eef
+        wp_start = self.get_eef_pose()
+        wp_end = self.get_eef_pose()
+        wp_end.pose.position.z = self.eef_height_at_grasp
+        waypoints = [wp_start.pose, wp_end.pose]
+        # print waypoints
+        jump_threshold = 10
+        max_step = 0.02
+        avoid_collisions = False
+        path_constraints = Constraints()
+        try:
+            req = rospy.ServiceProxy(
+                '/compute_cartesian_path', GetCartesianPath)
+            res = req(header, start_state, group_name, link_name, waypoints,
+                      max_step, jump_threshold, avoid_collisions, path_constraints)
+            traj = res.solution
+            # print res
+        except rospy.ServiceException, e:
+            print "Service call failed: %s" % e
+
+        client = actionlib.SimpleActionClient(
+            self.joint_traj_action_topic, FollowJointTrajectoryAction)
+        client.wait_for_server()
+
+        # http://docs.ros.org/diamondback/api/control_msgs/html/index-msg.html
+        print "Moving to place position"
+        goal = FollowJointTrajectoryGoal()
+        goal.trajectory = traj.joint_trajectory
+        client.send_goal(goal)
+        client.wait_for_result(rospy.Duration.from_sec(15.0))
+        # http://docs.ros.org/api/actionlib/html/classactionlib_1_1simple__action__client_1_1SimpleActionClient.html
+        # print client.get_state()                
+
     def actuate_fingers(self, action):
         js = JointState()
         js.name = self.finger_joint_names
         if action == 'close':
             js.position = [self.finger_joint_angles_grasp] * 3
+            self.eef_height_at_grasp = self.get_eef_pose().pose.position.z
         elif action == 'open':
             js.position = [self.finger_joint_angles_ungrasp] * 3
         self.finger_pub.publish(js)
         rospy.sleep(3)
     
-    def save_eef_pose_at_grasp(self):
-        self.tf_listener.waitForTransform("/" + self.reference_frame, "/" + self.palm_link_eef, rospy.Time(0), rospy.Duration(4.0))
-        tf = self.tf_listener.lookupTransform("/" + self.reference_frame, "/" + self.palm_link_eef, rospy.Time(0))
+    def save_joint_states_at_grasp(self):
+        self.joint_states_at_grasp = self.get_joint_states()
+        # self.tf_listener.waitForTransform("/" + self.reference_frame, "/" + self.palm_link_eef, rospy.Time(0), rospy.Duration(4.0))
+        # tf = self.tf_listener.lookupTransform("/" + self.reference_frame, "/" + self.palm_link_eef, rospy.Time(0))
 
-        # print trans, rot
+        # # print trans, rot
 
-        self.eef_pose_at_grasp.position.x = trans[0]
-        self.eef_pose_at_grasp.position.y = trans[1]
-        self.eef_pose_at_grasp.position.z = trans[2]
-        self.eef_pose_at_grasp.orientation.x = rot[0]
-        self.eef_pose_at_grasp.orientation.y = rot[1]
-        self.eef_pose_at_grasp.orientation.z = rot[2]
-        self.eef_pose_at_grasp.orientation.w = rot[3]
+        # self.eef_pose_at_grasp.position.x = trans[0]
+        # self.eef_pose_at_grasp.position.y = trans[1]
+        # self.eef_pose_at_grasp.position.z = trans[2]
+        # self.eef_pose_at_grasp.orientation.x = rot[0]
+        # self.eef_pose_at_grasp.orientation.y = rot[1]
+        # self.eef_pose_at_grasp.orientation.z = rot[2]
+        # self.eef_pose_at_grasp.orientation.w = rot[3]
 
         # self.tf_broadcaster.sendTransform(tf)
         # print "Sent transform!"
@@ -567,14 +621,22 @@ def main(args):
         # gdc.execute_grasp_action('open')
         gdc.move_to_state(gdc.get_ik('pre'))
         gdc.move_from_pregrasp_to_grasp(False)
-        # gdc.save_eef_pose_at_grasp()
+        gdc.save_joint_states_at_grasp()
         gdc.actuate_fingers('close')
         gdc.move_from_grasp_to_raised()
         # gdc.move_to_state(gdc.generate_joint_states_presentation_pose())
         gdc.move_to_state(gdc.generate_nbv_pose())
+        rospy.sleep(2)
+        gdc.move_to_state(gdc.get_ik('pre'))
+        rospy.sleep(2)
+        gdc.move_from_preplace_to_place()
+        rospy.sleep(2)
+        # gdc.move_to_state(gdc.joint_states_at_grasp)
+        # gdc.move_from_pregrasp_to_grasp(False)
         # gdc.move_to_state(gdc.get_ik('pre'))
         # gdc.move_from_pregrasp_to_grasp(True)
-        # gdc.actuate_fingers('open')
+        gdc.actuate_fingers('open')
+        gdc.move_from_grasp_to_raised()
         # height = gdc.get_object_height()
         # gdc.execute_grasp_action('open')
         # gdc.save(height_map, ik_pre, height)
