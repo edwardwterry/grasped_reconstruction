@@ -12,6 +12,7 @@ public:
     pc_sub = _n.subscribe("/camera/depth/points", 1, &GraspedReconstruction::pcClbk, this);
     occ_sub = _n.subscribe("/camera/depth/points", 1, &GraspedReconstruction::occClbk, this);
     gm_sub = _n.subscribe("/elevation_mapping/elevation_map", 1, &GraspedReconstruction::gmClbk, this);
+    save_eef_pose_sub = _n.subscribe("/save_current_eef_pose", 1, &GraspedReconstruction::saveCurrentEefPoseClbk, this);
     occ_pub = n.advertise<sensor_msgs::PointCloud2>("occluded_voxels", 1);
     // ch_pub = n.advertise<pcl_msgs::PolygonMesh>("convex_hull_mesh", 1);
     // hm_pub = n.advertise<sensor_msgs::PointCloud2>("object_without_table", 1);
@@ -46,12 +47,14 @@ public:
     _n.getParam("/gMin", gMin);
     _n.getParam("/rMin", rMin);
   }
+
   ros::NodeHandle _n;
-  ros::Subscriber pc_sub, gm_sub, occ_sub;
+  ros::Subscriber pc_sub, gm_sub, occ_sub, save_eef_pose_sub;
   ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub, entropy_arrow_pub, nbv_pub;
   image_transport::Publisher hm_im_pub;
   tf::TransformListener listener;
   tf::TransformBroadcaster broadcaster;
+  std::unordered_map<std::string, tf::StampedTransform> eef_pose_keyframes;
   tf::StampedTransform world_T_lens_link_tf, world_T_object_tf, O_T_W;
   tf2_ros::StaticTransformBroadcaster static_broadcaster;
   int rMax, rMin, gMax, gMin, bMax, bMin;
@@ -140,7 +143,7 @@ public:
         combo_orig.push_back(it->second.first);
       }
       combo_curr = combo_orig;
-      calculateVolumeOccludedByFingers(combo_curr);
+      // calculateVolumeOccludedByFingers(combo_curr);
       Eigen::Quaternionf best_view = calculateNextBestView(ipp);
       // find transform to get to this view
       tf::Quaternion q(best_view.x(), best_view.y(), best_view.z(), best_view.w());
@@ -162,7 +165,7 @@ public:
       static_transformStamped.transform.rotation.z = n_T_w.getRotation()[2];
       static_transformStamped.transform.rotation.w = n_T_w.getRotation()[3];
       static_broadcaster.sendTransform(static_transformStamped);
-      combo_made = true;
+      combo_made = true; // set to true for one off!!!!!!!!
     }
   }
 
@@ -205,9 +208,9 @@ public:
     PointCloud::Ptr finger_occlusion_points;
     // pcl::PointXYZ b(0.0f, 0.0f, 0.0f);
     hullCloud->push_back(pcl::PointXYZ(w_b.getOrigin().x(), w_b.getOrigin().y(), w_b.getOrigin().z()));
-    hullCloud->push_back(pcl::PointXYZ(-b_th.getOrigin().x()*finger_scale_factor + w_b.getOrigin().x(), -b_th.getOrigin().y()*finger_scale_factor + w_b.getOrigin().y(), -b_th.getOrigin().z()*finger_scale_factor + w_b.getOrigin().z()));
-    hullCloud->push_back(pcl::PointXYZ(-b_in.getOrigin().x()*finger_scale_factor + w_b.getOrigin().x(), -b_in.getOrigin().y()*finger_scale_factor + w_b.getOrigin().y(), -b_in.getOrigin().z()*finger_scale_factor + w_b.getOrigin().z()));
-    hullCloud->push_back(pcl::PointXYZ(-b_pi.getOrigin().x()*finger_scale_factor + w_b.getOrigin().x(), -b_pi.getOrigin().y()*finger_scale_factor + w_b.getOrigin().y(), -b_pi.getOrigin().z()*finger_scale_factor + w_b.getOrigin().z()));
+    hullCloud->push_back(pcl::PointXYZ(-b_th.getOrigin().x() * finger_scale_factor + w_b.getOrigin().x(), -b_th.getOrigin().y() * finger_scale_factor + w_b.getOrigin().y(), -b_th.getOrigin().z() * finger_scale_factor + w_b.getOrigin().z()));
+    hullCloud->push_back(pcl::PointXYZ(-b_in.getOrigin().x() * finger_scale_factor + w_b.getOrigin().x(), -b_in.getOrigin().y() * finger_scale_factor + w_b.getOrigin().y(), -b_in.getOrigin().z() * finger_scale_factor + w_b.getOrigin().z()));
+    hullCloud->push_back(pcl::PointXYZ(-b_pi.getOrigin().x() * finger_scale_factor + w_b.getOrigin().x(), -b_pi.getOrigin().y() * finger_scale_factor + w_b.getOrigin().y(), -b_pi.getOrigin().z() * finger_scale_factor + w_b.getOrigin().z()));
     std::cout << "Building convex hull from these points: " << std::endl;
     for (const auto &p : *hullCloud)
     {
@@ -218,7 +221,7 @@ public:
     pcl::ConvexHull<pcl::PointXYZ> cHull;
     cHull.setInputCloud(hullCloud);
     cHull.reconstruct(*hullPoints, hullPolygons);
-    std::cout<<"Created convex hull!"<<std::endl;
+    std::cout << "Created convex hull!" << std::endl;
 
     cropHullFilter.setHullIndices(hullPolygons);
     cropHullFilter.setHullCloud(hullPoints);
@@ -299,6 +302,39 @@ public:
     static_broadcaster.sendTransform(static_transformStamped);
   }
 
+  void saveCurrentEefPoseClbk(const std_msgs::String &msg)
+  {
+    std::string phase = msg.data;
+    tf::StampedTransform bb_bl;
+    try
+    {
+      ros::Time now = ros::Time::now();
+      listener.waitForTransform("/orig_bb", "/jaco_fingers_base_link",
+                                now, ros::Duration(3.0));
+      listener.lookupTransform("/orig_bb", "/jaco_fingers_base_link",
+                               now, bb_bl);
+    }
+    catch (tf::TransformException ex)
+    {
+      ROS_ERROR("%s", ex.what());
+    }
+    auto it = eef_pose_keyframes.find(phase);
+    if (it == eef_pose_keyframes.end())
+    {
+      eef_pose_keyframes.insert(std::make_pair(phase, bb_bl));
+    }
+    else
+    {
+      it->second = bb_bl;
+    }
+    for (const auto &e : eef_pose_keyframes)
+    {
+      std::cout << e.first << std::endl;
+      std::cout<<e.second.getOrigin().getX()<<" "<<e.second.getOrigin().getY()<<" "<<e.second.getOrigin().getZ()<<" "<<std::endl;
+      // std::cout<<e.second.getRotation()<<std::endl;
+    }
+  }
+
   void pcClbk(const sensor_msgs::PointCloud2ConstPtr &msg)
   {
     if (!orig_observed_set)
@@ -322,13 +358,13 @@ public:
       pass.filter(*cloud);
 
       pass.setFilterFieldName("x");
-      pass.setFilterLimits(-0.1, 0.3);
-      pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
+      pass.setFilterLimits(0, 0.4);
+      pass.setFilterLimitsNegative(false); // allow to pass what is inside of this range
       pass.filter(*cloud);
 
       pass.setFilterFieldName("y");
-      pass.setFilterLimits(-0.1, 0.1);
-      pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
+      pass.setFilterLimits(-0.4, 0.2);
+      pass.setFilterLimitsNegative(false); // allow to pass what is inside of this range
       pass.filter(*cloud);
       // std::cout << "Removed floor" << std::endl;
 
@@ -350,7 +386,7 @@ public:
       pass.filter(*cloud);
 
       orig_observed = *cloud;
-      orig_observed_set = true;
+      orig_observed_set = true; // set to TRUE to stop it from going around again!
       sensor_msgs::PointCloud2 output;
       pcl::toROSMsg(*cloud, output);
       object_pub.publish(output);
@@ -448,26 +484,36 @@ public:
   void gmClbk(const grid_map_msgs::GridMap::ConstPtr &msg)
   {
     cv_bridge::CvImagePtr cvImage(new cv_bridge::CvImage);
+    // cv_bridge::CvImagePtr cvImageObservedMask(new cv_bridge::CvImage);
     grid_map::GridMap gridMap;
-    ROS_INFO("%s", "here1");
+    // grid_map::GridMap gridMapMask;
     grid_map::GridMapRosConverter::fromMessage(*msg, gridMap);
-    ROS_INFO("%s", "here2");
+    // grid_map::GridMapRosConverter::fromMessage(*msg, gridMapMask);
 
-    // std::string layer("elevation");
-    // std::cout<<msg->layers[0]<<std::endl;
+    // for (size_t i = 0; i < msg->data[0].data.size(); ++i)
+    // {
+    //   if (std::isnan(msg->data[0].data[i]))
+    //   {
+    //     std::cout << "nan!" << std::endl;
+    //   }
+    // }
     std::string layer = msg->layers[0];
     grid_map::GridMapRosConverter::toCvImage(gridMap, layer, "mono8", *cvImage);
-    ROS_INFO("%s", "here3");
+    // grid_map::GridMapRosConverter::toCvImage(gridMapMask, layer, "mono8", *cvImageObservedMask);
 
     sensor_msgs::Image ros_image;
+    // sensor_msgs::Image ros_image_observed_mask;
     cvImage->toImageMsg(ros_image);
+    // cvImageObservedMask->toImageMsg(ros_image_observed_mask);
     ros_image.encoding = "mono8";
-    ROS_INFO("%s", "here4");
+    // ros_image_observed_mask.encoding = "mono8";
 
     ros_image.header = std_msgs::Header();
     ros_image.header.stamp = ros::Time::now();
+    // ros_image_observed_mask.header = std_msgs::Header();
+    // ros_image_observed_mask.header.stamp = ros::Time::now();
     hm_im_pub.publish(ros_image);
-    ROS_INFO("%s", "here5");
+    // hm_im_pub.publish(ros_image_observed_mask);
   }
 
   void divideBoundingBoxIntoVoxels()
