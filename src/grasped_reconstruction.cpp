@@ -314,32 +314,32 @@ public:
     try
     {
       ros::Time now = ros::Time::now();
-      // if (phase == "grasp")
-      // {
-      // geometry_msgs::TransformStamped static_transformStamped;
+      if (phase == "grasp")
+      {
+      geometry_msgs::TransformStamped static_transformStamped;
       listener.waitForTransform("/world", "/jaco_fingers_base_link",
                                 now, ros::Duration(3.0));
       listener.lookupTransform("/world", "/jaco_fingers_base_link",
                                now, bb_bl);
-      // static_transformStamped.header.stamp = ros::Time::now();
-      // static_transformStamped.header.frame_id = "world";
-      // static_transformStamped.child_frame_id = "jaco_fingers_base_link_at_grasp";
-      // static_transformStamped.transform.translation.x = bb_bl.getOrigin().x();
-      // static_transformStamped.transform.translation.y = bb_bl.getOrigin().y();
-      // static_transformStamped.transform.translation.z = bb_bl.getOrigin().z();
-      // static_transformStamped.transform.rotation.x = bb_bl.getRotation()[0];
-      // static_transformStamped.transform.rotation.y = bb_bl.getRotation()[1];
-      // static_transformStamped.transform.rotation.z = bb_bl.getRotation()[2];
-      // static_transformStamped.transform.rotation.w = bb_bl.getRotation()[3];
-      // static_broadcaster.sendTransform(static_transformStamped);
-      // }
-      // else if (phase == "present")
-      // {
-      //   listener.waitForTransform("/jaco_fingers_base_link_at_grasp", "/jaco_fingers_base_link",
-      //                             now, ros::Duration(3.0));
-      //   listener.lookupTransform("/jaco_fingers_base_link_at_grasp", "/jaco_fingers_base_link",
-      //                            now, bb_bl);
-      // }
+      static_transformStamped.header.stamp = ros::Time::now();
+      static_transformStamped.header.frame_id = "world";
+      static_transformStamped.child_frame_id = "jaco_fingers_base_link_at_grasp";
+      static_transformStamped.transform.translation.x = bb_bl.getOrigin().x();
+      static_transformStamped.transform.translation.y = bb_bl.getOrigin().y();
+      static_transformStamped.transform.translation.z = bb_bl.getOrigin().z();
+      static_transformStamped.transform.rotation.x = bb_bl.getRotation()[0];
+      static_transformStamped.transform.rotation.y = bb_bl.getRotation()[1];
+      static_transformStamped.transform.rotation.z = bb_bl.getRotation()[2];
+      static_transformStamped.transform.rotation.w = bb_bl.getRotation()[3];
+      static_broadcaster.sendTransform(static_transformStamped);
+      }
+      else if (phase == "present")
+      {
+        listener.waitForTransform("/world", "/jaco_fingers_base_link",
+                                  now, ros::Duration(3.0));
+        listener.lookupTransform("/world", "/jaco_fingers_base_link",
+                                 now, bb_bl);
+      }
     }
     catch (tf::TransformException ex)
     {
@@ -441,7 +441,7 @@ public:
     tf::Transform between, between2;
     if (eef_pose_keyframes.find("present") != eef_pose_keyframes.end() && eef_pose_keyframes.find("grasp") != eef_pose_keyframes.end())
     {
-      between = eef_pose_keyframes.find("grasp")->second.inverseTimes(eef_pose_keyframes.find("present")->second);
+      between = eef_pose_keyframes.find("grasp")->second;//.inverseTimes(eef_pose_keyframes.find("present")->second);
       between2 = eef_pose_keyframes.find("present")->second.inverseTimes(eef_pose_keyframes.find("grasp")->second);
 
       std::cout << "bet1: " << between.getOrigin().getX() << " " << between.getOrigin().getY() << " " << between.getOrigin().getZ() << std::endl;
@@ -453,26 +453,31 @@ public:
       // between.setRotation(tf::Quaternion(0,0,0,1));
       // between2.setRotation(tf::Quaternion(0,0,0,1));
       PointCloud::Ptr cloud_out(new PointCloud());
-      tf::Transform betweent1, betweenr, betweent2;
+      tf::Transform betweent1, betweenr, betweenr2, betweent2;
 
       // betweent1.setOrigin(tf::Vector3(eef_pose_keyframes.find("present")->second.getOrigin()));
       betweent1.setOrigin(tf::Vector3(-eef_pose_keyframes.find("present")->second.getOrigin().getX(), -eef_pose_keyframes.find("present")->second.getOrigin().getY(), -eef_pose_keyframes.find("present")->second.getOrigin().getZ()));
       betweenr.setRotation(tf::Quaternion(between2.getRotation()));
-      betweent2.setRotation(tf::Quaternion(0,0,0,1));
-      // betweent2.setOrigin(tf::Vector3(eef_pose_keyframes.find("grasp")->second.getOrigin().getX(), eef_pose_keyframes.find("grasp")->second.getOrigin().getY(), eef_pose_keyframes.find("grasp")->second.getOrigin().getZ()));
-      betweent2.setOrigin(tf::Vector3(0.2,0,0.935));
+      // betweenr.setRotation(tf::Quaternion(between2.getRotation()[0], between2.getRotation()[1], between2.getRotation()[2], between2.getRotation()[3]));
+      // betweenr2.setRotation(tf::Quaternion(between.getRotation()));
+      // betweent2.setRotation(tf::Quaternion(0,0,0,1));
+      betweent2.setOrigin(tf::Vector3(eef_pose_keyframes.find("grasp")->second.getOrigin().getX(), eef_pose_keyframes.find("grasp")->second.getOrigin().getY(), eef_pose_keyframes.find("grasp")->second.getOrigin().getZ()));
+      std::cout<<eef_pose_keyframes.find("grasp")->second.getOrigin().getX()<< " "<< eef_pose_keyframes.find("grasp")->second.getOrigin().getY()<< " "<<  eef_pose_keyframes.find("grasp")->second.getOrigin().getZ();
+      // betweent2.setOrigin(tf::Vector3(0.2,0,0.935));
       pcl_ros::transformPointCloud(*cloud_in, *cloud_out, betweent1);
       PointCloud::Ptr cloud_out2(new PointCloud());
       PointCloud::Ptr cloud_out3(new PointCloud());
+      PointCloud::Ptr cloud_out4(new PointCloud());
 
       pcl_ros::transformPointCloud(*cloud_out, *cloud_out2, betweenr);
-      pcl_ros::transformPointCloud(*cloud_out2, *cloud_out3, betweent2);
-      pcl::VoxelGrid<pcl::PointXYZ> downsample;
-      downsample.setInputCloud(cloud_out3);
-      downsample.setLeafSize(LEAF_SIZE, LEAF_SIZE, LEAF_SIZE);
-      downsample.filter(*cloud_out3);
+      // pcl_ros::transformPointCloud(*cloud_out2, *cloud_out3, betweenr2);
+      pcl_ros::transformPointCloud(*cloud_out2, *cloud_out4, betweent2);
+      // pcl::VoxelGrid<pcl::PointXYZ> downsample;
+      // downsample.setInputCloud(cloud_in);
+      // downsample.setLeafSize(LEAF_SIZE, LEAF_SIZE, LEAF_SIZE);
+      // downsample.filter(*cloud_out4);
       pcl::PCLPointCloud2 cloud_filtered2;
-      pcl::toPCLPointCloud2(*cloud_out3, cloud_filtered2);
+      pcl::toPCLPointCloud2(*cloud_out4, cloud_filtered2);
 
       sensor_msgs::PointCloud2Ptr output(new sensor_msgs::PointCloud2());
 
@@ -480,6 +485,11 @@ public:
       output->header.frame_id = "world";
 
       // Publish the data
+      // while (anytime_pub.getNumSubscribers() < 1)
+      // {
+      //   std::cout << "Waiting for en subscribers to connect..." << std::endl;
+      //   ros::Duration(1.0).sleep();
+      // }      
       anytime_pub.publish(*output);
 
       // PointCloud::Ptr cloud_out2(new PointCloud());
