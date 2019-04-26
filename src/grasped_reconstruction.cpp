@@ -62,6 +62,8 @@ public:
   IndexedPointsWithProb ipp_;
   std::unordered_map<int, float> cell_occupancy_prob_;
   PointCloud occluding_finger_points_;
+  std::vector<Eigen::Vector4f> nbv_origins_;
+  std::vector<Eigen::Quaternionf> nbv_orientations_;
 
   enum VoxelState
   {
@@ -78,6 +80,7 @@ public:
   std::vector<float> leaf_size_;
   int nr_, nc_, nl_;
   float LEAF_SIZE = 0.01f;
+  int num_voxels_;
 
   // gripper config
   tf::StampedTransform pi_T_fbl_, th_T_fbl_, in_T_fbl_;
@@ -194,14 +197,32 @@ public:
 
   bool calculateNbv(GraspedReconstruction::CalculateNbv::Request &req, GraspedReconstruction::CalculateNbv::Response &res)
   {
-    geometry_msgs::PoseStamped ps;
-    ps = req.eef_pose;
+    std::vector<float> view_entropies;
+    float highest_entropy = 0.0f;
+    geometry_msgs::PoseStamped best_eef_pose;
+    std::set<int> finger_occluded_voxels;
+    Eigen::Quaternionf best_view;
+    for (size_t i = 0; i < req.poses.size(); i++)
+    {
+      geometry_msgs::PoseStamped ps = req.poses[i];
+      getVoxelIdsOccludedByFingers(ps, finger_occluded_voxels);
+      Eigen::Quaternionf best_view_per_pose = calculateNextBestView(finger_occluded_voxels, view_entropies);
+      float max_entropy = *std::max_element(view_entropies.begin(), view_entropies.end());
+      if (i == 0)
+        ROS_ASSERT(max_entropy > 0.0f);
+      if (max_entropy > highest_entropy)
+      {
+        best_eef_pose = ps;
+        best_view = best_view_per_pose;
+        highest_entropy = max_entropy;
+      }
+    }
 
-    Eigen::Quaternionf best_view = calculateNextBestView(ipp_, ps);
     tf::Quaternion q(best_view.x(), best_view.y(), best_view.z(), best_view.w());
     tf::Transform t;
     t.setRotation(q);
     tf::Transform n_T_w(t * objorig_T_w_);
+    publishEntropyArrowSphere();
 
     geometry_msgs::Transform tf;
 
@@ -216,6 +237,37 @@ public:
     tf.transform.rotation.z = n_T_w.getRotation()[2];
     tf.transform.rotation.w = n_T_w.getRotation()[3];
     res.nbv = tf;
+  }
+
+  void publishEntropyArrowSphere()
+  {
+    visualization_msgs::MarkerArray ma;
+    for (int i = 0; i < nbv_origins_.size(); i++)
+    {
+      visualization_msgs::Marker marker;
+      marker.header.frame_id = "world";
+      marker.header.stamp = ros::Time();
+      marker.id = i;
+      marker.type = visualization_msgs::Marker::ARROW;
+      marker.action = visualization_msgs::Marker::ADD;
+      marker.pose.position.x = nbv_origins_.at(i)[0];
+      marker.pose.position.y = nbv_origins_.at(i)[1];
+      marker.pose.position.z = nbv_origins_.at(i)[2];
+      // direction between view origin and object
+      marker.pose.orientation.x = nbv_orientations_[i].x();
+      marker.pose.orientation.y = nbv_orientations_[i].y();
+      marker.pose.orientation.z = nbv_orientations_[i].z();
+      marker.pose.orientation.w = nbv_orientations_[i].w();
+      marker.scale.x = view_entropies[i] / entropy * 0.1; // TODO MAX ENTROPY
+      marker.scale.y = 0.01;
+      marker.scale.z = 0.01;
+      marker.color.a = 1.0; // Don't forget to set the alpha!
+      marker.color.r = 0.0;
+      marker.color.g = 1.0;
+      marker.color.b = 0.0;
+      ma.markers.push_back(marker);
+    }
+    entropy_arrow_pub.publish(ma);
   }
 
   void saveOpenGripperConfiguration()
@@ -247,9 +299,8 @@ public:
     occluding_finger_points_.push_back(pcl::PointXYZ(pi_T_fbl_.getOrigin().x() * FINGER_SCALE_FACTOR, pi_T_fbl_.getOrigin().y() * FINGER_SCALE_FACTOR, pi_T_fbl_.getOrigin().z() * FINGER_SCALE_FACTOR));
   }
 
-  bool getVoxelIdsOccludedByGripper(const geometry_msgs::PoseStamped &ps, std::vector<int> occluded_voxel_ids)
+  void getVoxelIdsOccludedByFingers(const geometry_msgs::PoseStamped &ps, std::set<int> finger_occluded_voxels)
   {
-    bool any_occluded = false;
     // std::cout<<"VG size: "<<voxel_grid.size()<<std::endl;
     // https://github.com/PointCloudLibrary/pcl/issues/1657
     pcl::CropHull<pcl::PointXYZ> cropHullFilter;
@@ -293,7 +344,6 @@ public:
     boost::shared_ptr<PointCloud> filtered(new PointCloud());
     cropHullFilter.filter(*filtered);
     std::cout << "Proportion occluded by fingers: " << float(filtered->size()) / float(voxel_grid.size()) << std::endl;
-    return any_occluded;
   }
 
   void publishBoundingBoxMarker()
@@ -674,6 +724,7 @@ public:
     leaf_size_[2] = (orig_bb_max_.z - orig_bb_min_.z) / nl_;
     std::cout << "Divided bounding box into voxels!" << std::endl;
     std::cout << "nr_: " << nr_ << " nc_: " << nc_ << " nl_: " << nl_ << std::endl;
+    num_voxels_ = (nr_ + 1) * (nc_ + 1) * (nl_ + 1);
   }
 
   void updatePointCloudWithNewObservation()
@@ -691,22 +742,18 @@ public:
     std::cout << "Appended and included point cloud with probabilities!" << std::endl;
   }
 
-  Eigen::Quaternionf calculateNextBestView(const IndexedPointsWithProb &ipp)
+  Eigen::Quaternionf calculateNextBestView(const std::set<int> &finger_occluded_voxels, std::vector<float> &view_entropies)
   {
     std::cout << "Beginning calculation of next best view!" << std::endl;
-    std::vector<float> view_entropy;
-    std::vector<Eigen::Vector4f> views;
-    std::vector<Eigen::Quaternionf> quats;
     Eigen::Vector4f best_view;
     best_view << 0.0f, 0.0f, 0.0f, 0.0f;
     float entropy = 0.0f;
-    generateViewCandidates(views, quats);
     int best_view_id;
     int view_id = 0;
-    for (const auto &v : views)
+    for (const auto &v : nbv_origins_)
     {
-      float e = calculateViewEntropy(v, ipp);
-      view_entropy.push_back(e);
+      float e = calculateViewEntropy(v);
+      view_entropies.push_back(e);
       std::cout << "Origin: " << v[0] << " " << v[1] << " " << v[2] << " Entropy: " << e << std::endl;
       if (e > entropy)
       {
@@ -716,52 +763,16 @@ public:
       }
       view_id++;
     }
-
-    { // publish rviz arrows
-      visualization_msgs::MarkerArray ma;
-      for (int i = 0; i < views.size(); i++)
-      {
-        visualization_msgs::Marker marker;
-        marker.header.frame_id = "world";
-        marker.header.stamp = ros::Time();
-        marker.id = i;
-        marker.type = visualization_msgs::Marker::ARROW;
-        marker.action = visualization_msgs::Marker::ADD;
-        marker.pose.position.x = views.at(i)[0];
-        marker.pose.position.y = views.at(i)[1];
-        marker.pose.position.z = views.at(i)[2];
-        // direction between view origin and object
-        marker.pose.orientation.x = quats[i].x();
-        marker.pose.orientation.y = quats[i].y();
-        marker.pose.orientation.z = quats[i].z();
-        marker.pose.orientation.w = quats[i].w();
-        marker.scale.x = view_entropy[i] / entropy * 0.1;
-        marker.scale.y = 0.01;
-        marker.scale.z = 0.01;
-        marker.color.a = 1.0; // Don't forget to set the alpha!
-        marker.color.r = 0.0;
-        marker.color.g = 1.0;
-        marker.color.b = 0.0;
-        ma.markers.push_back(marker);
-      }
-      // while (entropy_arrow_pub.getNumSubscribers() < 1)
-      // {
-      //   std::cout << "Waiting for arrow subscribers to connect..." << std::endl;
-      //   ros::Duration(1.0).sleep();
-      // }
-      entropy_arrow_pub.publish(ma);
-    }
-    return quats[best_view_id];
-    // return Eigen::Quaternionf(1,0,0,0);
+    return nbv_orientations_[best_view_id];
   }
 
-  float calculateViewEntropy(const Eigen::Vector4f &origin, const IndexedPointsWithProb &ipp)
+  float calculateViewEntropy(const Eigen::Vector4f &origin, const std::set<int> &)
   {
     float entropy = 0.0f;
 
     std::set<int> cell_visited;
 
-    for (int i = 0; i < (nr_ + 1) * (nc_ + 1) * (nl_ + 1); i++) // for each point in voxel grid
+    for (int i = 0; i < num_voxels_; i++) // for each point in voxel grid
     {
       std::vector<Eigen::Vector3i> out_ray;
       std::vector<Eigen::Vector3i> out_ray_unique;
@@ -796,15 +807,15 @@ public:
     return entropy;
   }
 
-  float calculateEntropyAlongRay(const std::vector<Eigen::Vector3i> &ray, const std::unordered_map<int, float> &cell_occupancy_prob) // TODO distance weighted
+  float calculateEntropyAlongRay(const std::vector<Eigen::Vector3i> &ray) // TODO distance weighted
   {
     float entropy = 0.0f;
     for (const auto &v : ray)
     {
       int index = gridCoordToVoxelIndex(v);
       // std::cout << ">> along ray... Grid coord: " << v[0] << " " << v[1] << " " << v[2] << " Voxel index: " << index << std::endl;
-      auto it_prob = cell_occupancy_prob.find(gridCoordToVoxelIndex(v));
-      ROS_ASSERT(it_prob != cell_occupancy_prob.end());
+      auto it_prob = cell_occupancy_prob_.find(gridCoordToVoxelIndex(v));
+      ROS_ASSERT(it_prob != cell_occupancy_prob_.end());
       float p = it_prob->second;
       if (p > 0.6)
         break;
@@ -1026,7 +1037,7 @@ public:
     return tmin;
   }
 
-  void generateViewCandidates(std::vector<Eigen::Vector4f> &views, std::vector<Eigen::Quaternionf> &quats)
+  void generateViewCandidates()
   {
     float az_min = 0.0f + M_PI / 16;
     float az_max = 2.0f * M_PI + M_PI / 16;
@@ -1044,14 +1055,14 @@ public:
         v[1] = VIEW_RADIUS * sin(az) * cos(el) + objorig_T_w_.getOrigin().getY();
         v[2] = VIEW_RADIUS * sin(el) + objorig_T_w_.getOrigin().getZ();
         v[3] = 0.0f;
-        views.push_back(v);
+        nbv_origins_.push_back(v);
         // calculate quaternion from view to origin
         // https://stackoverflow.com/questions/31589901/euler-to-quaternion-quaternion-to-euler-using-eigen
         Eigen::Quaternionf q;
         Eigen::Vector3f axis;
         axis << -sin(az), cos(az), 0.0f;
         q = Eigen::AngleAxisf(-el, axis) * Eigen::AngleAxisf(az, Eigen::Vector3f::UnitZ());
-        quats.push_back(q);
+        nbv_orientations_.push_back(q);
       }
     }
   }
@@ -1072,6 +1083,7 @@ int main(int argc, char **argv)
       gr.saveInitialObjectPose();
       gr.saveOpenGripperConfiguration();
       gr.initializeVoxelGrid();
+      gr.generateViewCandidates();
     }
     ros::spinOnce();
     loop_rate.sleep();
