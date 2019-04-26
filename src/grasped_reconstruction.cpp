@@ -16,7 +16,7 @@ public:
     // color_sub = nh_.subscribe("/camera/depth/points", 1, &GraspedReconstruction::colorClbk, this);
     save_eef_pose_sub = nh_.subscribe("/save_current_eef_pose", 1, &GraspedReconstruction::saveCurrentEefPoseClbk, this);
     occ_pub = n.advertise<sensor_msgs::PointCloud2>("occluded_voxels", 1);
-    combo_pub = n.advertise<sensor_msgs::PointCloud2>("combo", 1);
+    // combo_pub = n.advertise<sensor_msgs::PointCloud2>("combo", 1);
     object_pub = n.advertise<sensor_msgs::PointCloud2>("segmented_object", 1);
     tabletop_pub = n.advertise<sensor_msgs::PointCloud2>("tabletop", 1);
     entropy_arrow_pub = n.advertise<visualization_msgs::MarkerArray>("entropy_arrows", 1);
@@ -64,7 +64,7 @@ public:
   PointCloud occluding_finger_points_;
   std::vector<Eigen::Vector4f> nbv_origins_;
   std::vector<Eigen::Quaternionf> nbv_orientations_;
-  sensor_msgs::PointCloud2Ptr anytime_pc_;//(new sensor_msgs::PointCloud2);
+  sensor_msgs::PointCloud2Ptr anytime_pc_; //(new sensor_msgs::PointCloud2);
 
   enum VoxelState
   {
@@ -210,6 +210,7 @@ public:
 
   void saveInitialObjectPose()
   {
+    std::cout << "Saving initial object pose" << std::endl;
     try
     {
       ros::Time now = ros::Time::now();
@@ -226,6 +227,7 @@ public:
 
   void initializeVoxelGrid()
   {
+    std::cout << "Initializing voxel grid" << std::endl;
     PointCloud::Ptr cl(new PointCloud);
     *cl = orig_observed_;
     pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
@@ -267,17 +269,14 @@ public:
     geometry_msgs::PoseStamped best_eef_pose;
     std::set<int> finger_occluded_voxels;
     Eigen::Quaternionf best_view;
-    // for (size_t i = 0; i < req.eef_poses.poses.size(); i++) // go through every candidate pose
     for (auto it = req.eef_poses.poses.begin(); it != req.eef_poses.poses.end(); it++) // go through every candidate pose
     {
-      // geometry_msgs::PoseStamped ps = req.eef_poses.poses[i];
       geometry_msgs::PoseStamped ps;
       ps.pose = *it;
       ps.header.frame_id = "/world";
       getVoxelIdsOccludedByFingers(ps, finger_occluded_voxels);
       Eigen::Quaternionf best_view_per_pose = calculateNextBestView(finger_occluded_voxels, view_entropies);
       float max_entropy = *std::max_element(view_entropies.begin(), view_entropies.end());
-      // if (i == 0)
       if (it == req.eef_poses.poses.begin())
         ROS_ASSERT(max_entropy > 0.0f);
       if (max_entropy > highest_entropy)
@@ -344,6 +343,7 @@ public:
 
   void saveOpenGripperConfiguration()
   {
+    std::cout << "Saving open gripper configuration" << std::endl;
     try
     {
       ros::Time now = ros::Time::now();
@@ -369,6 +369,10 @@ public:
     occluding_finger_points_.push_back(pcl::PointXYZ(th_T_fbl_.getOrigin().x() * FINGER_SCALE_FACTOR, th_T_fbl_.getOrigin().y() * FINGER_SCALE_FACTOR, th_T_fbl_.getOrigin().z() * FINGER_SCALE_FACTOR));
     occluding_finger_points_.push_back(pcl::PointXYZ(in_T_fbl_.getOrigin().x() * FINGER_SCALE_FACTOR, in_T_fbl_.getOrigin().y() * FINGER_SCALE_FACTOR, in_T_fbl_.getOrigin().z() * FINGER_SCALE_FACTOR));
     occluding_finger_points_.push_back(pcl::PointXYZ(pi_T_fbl_.getOrigin().x() * FINGER_SCALE_FACTOR, pi_T_fbl_.getOrigin().y() * FINGER_SCALE_FACTOR, pi_T_fbl_.getOrigin().z() * FINGER_SCALE_FACTOR));
+    for (const auto &pt : occluding_finger_points_)
+    {
+      std::cout << pt << std::endl;
+    }
   }
 
   void getVoxelIdsOccludedByFingers(const geometry_msgs::PoseStamped &ps, std::set<int> finger_occluded_voxels)
@@ -382,6 +386,9 @@ public:
     tf.setOrigin(tf::Vector3(ps.pose.position.x, ps.pose.position.y, ps.pose.position.z));
     tf.setRotation(tf::Quaternion(ps.pose.orientation.x, ps.pose.orientation.y, ps.pose.orientation.z, ps.pose.orientation.w));
     pcl_ros::transformPointCloud(*hullCloud, *hullCloud, tf);
+    for (const auto &pt: *hullCloud){
+      std::cout<<pt<<std::endl;
+    }
     boost::shared_ptr<PointCloud> hullPoints(new PointCloud());
     std::vector<pcl::Vertices> hullPolygons;
 
@@ -399,23 +406,23 @@ public:
     // create point cloud
     boost::shared_ptr<PointCloud> pc(new PointCloud());
 
-    // // a point inside the hull
-    // for (size_t i = 0; i < voxel_grid.size(); ++i)
-    // {
-    //   std::cout<<voxel_grid[i]<<std::endl;
-    //   pc->push_back(voxel_grid[i]);
-    // }
+    // a point inside the hull
+    for (size_t i = 0; i < num_voxels_; ++i)
+    {
+      Eigen::Vector4f w = voxelIndexToWorldCoord(i);
+      pc->push_back(pcl::PointXYZ(w[0], w[1], w[2]));
+      std::cout << (*pc)[i] << std::endl;
+    }
 
     // for (size_t i = 0; i < pc->size(); ++i)
     // {
-    //   std::cout << (*pc)[i] << std::endl;
     // }
 
     //filter points
     cropHullFilter.setInputCloud(pc);
     boost::shared_ptr<PointCloud> filtered(new PointCloud());
     cropHullFilter.filter(*filtered);
-    // std::cout << "Proportion occluded by fingers: " << float(filtered->size()) / float(voxel_grid.size()) << std::endl;
+    std::cout << "Proportion occluded by fingers: " << float(filtered->size()) / float(num_voxels_) << std::endl;
   }
 
   void publishBoundingBoxMarker()
@@ -632,7 +639,9 @@ public:
 
       pcl::PCLPointCloud2 cloud_filtered2;
 
+      std::cout << "here1" << std::endl;
       pcl_ros::transformPointCloud(lens_frame, *cloud, *cloud, listener);
+      std::cout << "here2" << std::endl;
 
       pcl::VoxelGridOcclusionEstimation<pcl::PointXYZ> occ;
 
@@ -655,7 +664,9 @@ public:
 
       //convert to world
       cloud_occluded->header.frame_id = "lens_link";
+      std::cout << "here3" << std::endl;
       pcl_ros::transformPointCloud(target_frame, *cloud_occluded, *cloud_occluded, listener);
+      std::cout << "here4" << std::endl;
 
       pass.setInputCloud(cloud_occluded);
       pass.setFilterFieldName("z");
@@ -671,6 +682,7 @@ public:
 
       pcl_conversions::fromPCL(cloud_filtered2, *output);
       output->header.frame_id = "world";
+      std::cout << "here5" << std::endl;
 
       // Publish the data
       occ_pub.publish(*output);
@@ -1045,6 +1057,7 @@ public:
 
   void generateViewCandidates()
   {
+    std::cout << "Generating view candidates" << std::endl;
     float az_min = 0.0f + M_PI / 16;
     float az_max = 2.0f * M_PI + M_PI / 16;
     float el_min = -M_PI / 2.0f + M_PI / 16;
@@ -1084,7 +1097,7 @@ int main(int argc, char **argv)
   gr.getParams();
   while (ros::ok())
   {
-    if (!gr.vg_initialized_)
+    if (!gr.vg_initialized_ && gr.orig_observed_set_ && gr.orig_unobserved_set_)
     {
       gr.saveInitialObjectPose();
       gr.saveOpenGripperConfiguration();
