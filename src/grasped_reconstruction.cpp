@@ -26,8 +26,8 @@ public:
     image_transport::ImageTransport it(n);
     hm_im_pub = it.advertise("height_map_image", 1);
 
-    calculate_nbv_service_ = nh_.advertiseService("calculate_nbv", calculateNbv);
-    capture_and_process_observation_service_ = nh_.advertiseService("capture_and_process_observation", captureAndProcessObservation);
+    calculate_nbv_service_ = nh_.advertiseService("calculate_nbv", &GraspedReconstruction::calculateNbv, this);
+    capture_and_process_observation_service_ = nh_.advertiseService("capture_and_process_observation", &GraspedReconstruction::captureAndProcessObservation, this);
 
     probability_by_state_.insert(std::make_pair(VoxelState::OCCUPIED, P_OCC));
     probability_by_state_.insert(std::make_pair(VoxelState::FREE, P_FREE));
@@ -38,7 +38,7 @@ public:
   ros::NodeHandle nh_;
   ros::Subscriber pc_sub, gm_sub, occ_sub, save_eef_pose_sub, pc_anytime_sub, color_sub;
   ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub, entropy_arrow_pub, nbv_pub, anytime_pub, anytime_pub2;
-  ros::ServiceServer calculate_nbv_service_, capture_and_integrate_observation_service_;
+  ros::ServiceServer calculate_nbv_service_, capture_and_process_observation_service_;
   image_transport::Publisher hm_im_pub;
   tf::TransformListener listener;
   tf::TransformBroadcaster broadcaster;
@@ -64,13 +64,13 @@ public:
   PointCloud occluding_finger_points_;
   std::vector<Eigen::Vector4f> nbv_origins_;
   std::vector<Eigen::Quaternionf> nbv_orientations_;
+  sensor_msgs::PointCloud2ConstPtr anytime_pc_(new sensor_msgs::PointCloud2);
 
   enum VoxelState
   {
     OCCUPIED,
     FREE,
     UNOBSERVED,
-    GRASP_OCCLUDED,
   };
 
   std::unordered_map<int, float> probability_by_state_;
@@ -86,8 +86,72 @@ public:
   tf::StampedTransform pi_T_fbl_, th_T_fbl_, in_T_fbl_;
   float FINGER_SCALE_FACTOR = 1.3f;
 
-  bool captureAndIntegrateObservation(GraspedReconstruction::CaptureAndIntegrateObservation::Request &req, GraspedReconstruction::CaptureAndIntegrateObservation::Request &res)
+  bool captureAndProcessObservation(GraspedReconstruction::CaptureAndProcessObservation::Request &req, GraspedReconstruction::CaptureAndProcessObservation::Request &res)
   {
+    sensor_msgs::PointCloud2Ptr msg_transformed(new sensor_msgs::PointCloud2());
+    std::string target_frame("world");
+    pcl_ros::transformPointCloud(target_frame, *anytime_pc, *msg_transformed, listener);
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>());
+    pcl::fromROSMsg(*msg_transformed, *cloud);
+
+    pcl::ConditionAnd<pcl::PointXYZRGB>::Ptr color_cond(new pcl::ConditionAnd<pcl::PointXYZRGB>());
+    if (nh_.hasParam("/rMax"))
+    {
+      color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("h", pcl::ComparisonOps::LT, rMax)));
+    }
+    if (nh_.hasParam("/rMin"))
+    {
+      color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("h", pcl::ComparisonOps::GT, rMin)));
+    }
+    // build the filter
+    pcl::ConditionalRemoval<pcl::PointXYZRGB> condrem;
+    condrem.setCondition(color_cond);
+    condrem.setInputCloud(cloud);
+    condrem.setKeepOrganized(false);
+
+    // apply filter
+    condrem.filter(*cloud);
+
+    if (eef_pose_keyframes.find("present") != eef_pose_keyframes.end() && eef_pose_keyframes.find("grasp") != eef_pose_keyframes.end())
+    {
+      {
+        sensor_msgs::PointCloud2Ptr output(new sensor_msgs::PointCloud2());
+        Eigen::Matrix4f p_T_w, g_T_w, w_T_p, w_T_g;
+        pcl_ros::transformAsMatrix(eef_pose_keyframes.find("present")->second, p_T_w);
+        pcl_ros::transformAsMatrix(eef_pose_keyframes.find("grasp")->second, g_T_w);
+        std::cout << "\n p_T_w:\n"
+                  << (p_T_w).matrix() << std::endl;
+        std::cout << "\n g_T_w:\n"
+                  << (g_T_w).matrix() << std::endl;
+        w_T_p = Eigen::Matrix4f::Identity();
+        w_T_p.block(0, 0, 3, 3) = p_T_w.block(0, 0, 3, 3).transpose();
+        w_T_p.block(0, 3, 3, 1) = -p_T_w.block(0, 0, 3, 3).transpose() * p_T_w.block(0, 3, 3, 1);
+        std::cout << "\n w_T_p:\n"
+                  << (w_T_p).matrix() << std::endl;
+        std::cout << "\n homog matrix:\n"
+                  << (w_T_p * g_T_w).matrix() << std::endl;
+
+        for (auto it = cloud->begin(); it != cloud->end(); ++it)
+        {
+          Eigen::Matrix4f pt, tx;
+          pt = Eigen::Matrix4f::Identity();
+          tx = Eigen::Matrix4f::Identity();
+          pt(0, 3) = it->x;
+          pt(1, 3) = it->y;
+          pt(2, 3) = it->z;
+          tx = (g_T_w * w_T_p) * pt;
+          it->x = tx(0, 3);
+          it->y = tx(1, 3);
+          it->z = tx(2, 3);
+        }
+        sensor_msgs::PointCloud2Ptr cloud_in_smpc2(new sensor_msgs::PointCloud2);
+        pcl::toROSMsg(*cloud, *cloud_in_smpc2);
+        sensor_msgs::PointCloud2 cloud_out_smpc2;
+        pcl_ros::transformPointCloud(Eigen::Matrix4f::Identity(), *cloud_in_smpc2, *output);
+        output->header.frame_id = "world";
+        anytime_pub.publish(*output);
+      }
+    }
   }
 
   void getParams()
@@ -198,11 +262,12 @@ public:
   bool calculateNbv(GraspedReconstruction::CalculateNbv::Request &req, GraspedReconstruction::CalculateNbv::Response &res)
   {
     std::vector<float> view_entropies;
+    std::vector<float> best_view_entropies;
     float highest_entropy = 0.0f;
     geometry_msgs::PoseStamped best_eef_pose;
     std::set<int> finger_occluded_voxels;
     Eigen::Quaternionf best_view;
-    for (size_t i = 0; i < req.poses.size(); i++)
+    for (size_t i = 0; i < req.poses.size(); i++) // go through every candidate pose
     {
       geometry_msgs::PoseStamped ps = req.poses[i];
       getVoxelIdsOccludedByFingers(ps, finger_occluded_voxels);
@@ -214,34 +279,36 @@ public:
       {
         best_eef_pose = ps;
         best_view = best_view_per_pose;
+        best_view_entropies = view_entropies;
         highest_entropy = max_entropy;
       }
+      finger_occluded_voxels.clear();
+      view_entropies.clear();
     }
 
     tf::Quaternion q(best_view.x(), best_view.y(), best_view.z(), best_view.w());
     tf::Transform t;
     t.setRotation(q);
     tf::Transform n_T_w(t * objorig_T_w_);
-    publishEntropyArrowSphere();
+
+    publishEntropyArrowSphere(best_view_entropies);
 
     geometry_msgs::Transform tf;
-
-    tf.header.stamp = ros::Time::now();
-    tf.header.frame_id = "world";
-    tf.child_frame_id = "nbv";
-    tf.transform.translation.x = n_T_w.getOrigin().x();
-    tf.transform.translation.y = n_T_w.getOrigin().y();
-    tf.transform.translation.z = n_T_w.getOrigin().z();
-    tf.transform.rotation.x = n_T_w.getRotation()[0];
-    tf.transform.rotation.y = n_T_w.getRotation()[1];
-    tf.transform.rotation.z = n_T_w.getRotation()[2];
-    tf.transform.rotation.w = n_T_w.getRotation()[3];
+    tf.translation.x = n_T_w.getOrigin().x();
+    tf.translation.y = n_T_w.getOrigin().y();
+    tf.translation.z = n_T_w.getOrigin().z();
+    tf.rotation.x = n_T_w.getRotation()[0];
+    tf.rotation.y = n_T_w.getRotation()[1];
+    tf.rotation.z = n_T_w.getRotation()[2];
+    tf.rotation.w = n_T_w.getRotation()[3];
     res.nbv = tf;
+    res.eef_pose = best_eef_pose;
   }
 
-  void publishEntropyArrowSphere()
+  void publishEntropyArrowSphere(std::vector<float> view_entropies)
   {
     visualization_msgs::MarkerArray ma;
+    float entropy = *std::max_element(view_entropies.begin(), view_entropies.end());
     for (int i = 0; i < nbv_origins_.size(); i++)
     {
       visualization_msgs::Marker marker;
@@ -258,7 +325,7 @@ public:
       marker.pose.orientation.y = nbv_orientations_[i].y();
       marker.pose.orientation.z = nbv_orientations_[i].z();
       marker.pose.orientation.w = nbv_orientations_[i].w();
-      marker.scale.x = view_entropies[i] / entropy * 0.1; // TODO MAX ENTROPY
+      marker.scale.x = view_entropies[i] / entropy * 0.1;
       marker.scale.y = 0.01;
       marker.scale.z = 0.01;
       marker.color.a = 1.0; // Don't forget to set the alpha!
@@ -343,7 +410,7 @@ public:
     cropHullFilter.setInputCloud(pc);
     boost::shared_ptr<PointCloud> filtered(new PointCloud());
     cropHullFilter.filter(*filtered);
-    std::cout << "Proportion occluded by fingers: " << float(filtered->size()) / float(voxel_grid.size()) << std::endl;
+    // std::cout << "Proportion occluded by fingers: " << float(filtered->size()) / float(voxel_grid.size()) << std::endl;
   }
 
   void publishBoundingBoxMarker()
@@ -515,76 +582,7 @@ public:
 
   void pcAnytimeClbk(const sensor_msgs::PointCloud2ConstPtr &msg)
   {
-    sensor_msgs::PointCloud2Ptr msg_transformed(new sensor_msgs::PointCloud2());
-    std::string target_frame("world");
-    pcl_ros::transformPointCloud(target_frame, *msg, *msg_transformed, listener);
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_in(new pcl::PointCloud<pcl::PointXYZRGB>());
-    pcl::fromROSMsg(*msg_transformed, *cloud_in);
-
-    pcl::ConditionAnd<pcl::PointXYZRGB>::Ptr color_cond(new pcl::ConditionAnd<pcl::PointXYZRGB>());
-    if (nh_.hasParam("/rMax"))
-    {
-      color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("h", pcl::ComparisonOps::LT, rMax)));
-    }
-    if (nh_.hasParam("/rMin"))
-    {
-      color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("h", pcl::ComparisonOps::GT, rMin)));
-    }
-    // build the filter
-    pcl::ConditionalRemoval<pcl::PointXYZRGB> condrem;
-    condrem.setCondition(color_cond);
-    condrem.setInputCloud(cloud_in);
-    condrem.setKeepOrganized(false);
-
-    // apply filter
-    condrem.filter(*cloud_in);
-
-    tf::Transform between, between2;
-    if (eef_pose_keyframes.find("present") != eef_pose_keyframes.end() && eef_pose_keyframes.find("grasp") != eef_pose_keyframes.end())
-    {
-      {
-        sensor_msgs::PointCloud2Ptr output(new sensor_msgs::PointCloud2());
-        Eigen::Matrix4f p_T_w, g_T_w, w_T_p, w_T_g;
-        pcl_ros::transformAsMatrix(eef_pose_keyframes.find("present")->second, p_T_w);
-        pcl_ros::transformAsMatrix(eef_pose_keyframes.find("grasp")->second, g_T_w);
-        std::cout << "\n p_T_w:\n"
-                  << (p_T_w).matrix() << std::endl;
-        std::cout << "\n g_T_w:\n"
-                  << (g_T_w).matrix() << std::endl;
-        w_T_p = Eigen::Matrix4f::Identity();
-        w_T_p.block(0, 0, 3, 3) = p_T_w.block(0, 0, 3, 3).transpose();
-        w_T_p.block(0, 3, 3, 1) = -p_T_w.block(0, 0, 3, 3).transpose() * p_T_w.block(0, 3, 3, 1);
-        std::cout << "\n w_T_p:\n"
-                  << (w_T_p).matrix() << std::endl;
-        std::cout << "\n homog matrix:\n"
-                  << (w_T_p * g_T_w).matrix() << std::endl;
-
-        for (auto it = cloud_in->begin(); it != cloud_in->end(); ++it)
-        {
-          Eigen::Matrix4f pt, tx;
-          pt = Eigen::Matrix4f::Identity();
-          tx = Eigen::Matrix4f::Identity();
-          pt(0, 3) = it->x;
-          pt(1, 3) = it->y;
-          pt(2, 3) = it->z;
-          std::cout << "b: " << *it << std::endl;
-          inv_pt(0, 3) = -it->x;
-          inv_pt(1, 3) = -it->y;
-          inv_pt(2, 3) = -it->z;
-          tx = (g_T_w * w_T_p) * pt;
-          it->x = tx(0, 3);
-          it->y = tx(1, 3);
-          it->z = tx(2, 3);
-          std::cout << "a: " << *it << std::endl;
-        }
-        sensor_msgs::PointCloud2Ptr cloud_in_smpc2(new sensor_msgs::PointCloud2);
-        pcl::toROSMsg(*cloud_in, *cloud_in_smpc2);
-        sensor_msgs::PointCloud2 cloud_out_smpc2;
-        pcl_ros::transformPointCloud(Eigen::Matrix4f::Identity(), *cloud_in_smpc2, *output);
-        output->header.frame_id = "world";
-        anytime_pub.publish(*output);
-      }
-    }
+    *anytime_pc_ = *msg;
   }
 
   void calculateUnobservedPointsClbk(const sensor_msgs::PointCloud2ConstPtr &cloud_msg)
@@ -727,10 +725,6 @@ public:
     num_voxels_ = (nr_ + 1) * (nc_ + 1) * (nl_ + 1);
   }
 
-  void updatePointCloudWithNewObservation()
-  {
-  }
-
   void appendAndIncludePointCloudProb(const PointCloud &new_cloud, const int state)
   {
     float prob = probability_by_state_.find(state)->second;
@@ -752,7 +746,7 @@ public:
     int view_id = 0;
     for (const auto &v : nbv_origins_)
     {
-      float e = calculateViewEntropy(v);
+      float e = calculateViewEntropy(v, finger_occluded_voxels);
       view_entropies.push_back(e);
       std::cout << "Origin: " << v[0] << " " << v[1] << " " << v[2] << " Entropy: " << e << std::endl;
       if (e > entropy)
@@ -766,7 +760,7 @@ public:
     return nbv_orientations_[best_view_id];
   }
 
-  float calculateViewEntropy(const Eigen::Vector4f &origin, const std::set<int> &)
+  float calculateViewEntropy(const Eigen::Vector4f &origin, const std::set<int> &finger_occluded_voxels)
   {
     float entropy = 0.0f;
 
@@ -801,25 +795,32 @@ public:
           // std::cout << "Not adding a repeat observation of voxel ID: " << index << std::endl;
         }
       }
-      entropy += calculateEntropyAlongRay(out_ray_unique, cell_occupancy_prob);
+      entropy += calculateEntropyAlongRay(out_ray_unique, finger_occluded_voxels);
     }
 
     return entropy;
   }
 
-  float calculateEntropyAlongRay(const std::vector<Eigen::Vector3i> &ray) // TODO distance weighted
+  float calculateEntropyAlongRay(const std::vector<Eigen::Vector3i> &ray, const std::set<int> &finger_occluded_voxels) // TODO distance weighted
   {
     float entropy = 0.0f;
     for (const auto &v : ray)
     {
       int index = gridCoordToVoxelIndex(v);
-      // std::cout << ">> along ray... Grid coord: " << v[0] << " " << v[1] << " " << v[2] << " Voxel index: " << index << std::endl;
-      auto it_prob = cell_occupancy_prob_.find(gridCoordToVoxelIndex(v));
-      ROS_ASSERT(it_prob != cell_occupancy_prob_.end());
-      float p = it_prob->second;
-      if (p > 0.6)
-        break;
-      entropy += -p * log(p) - (1.0f - p) * log(1.0f - p);
+      if (finger_occluded_voxels.find(index) != finger_occluded_voxels.end()) // if this voxel is hidden by the fingers
+      {
+        entropy += 0.0f; // don't learn anything from it
+      }
+      else
+      {
+        // std::cout << ">> along ray... Grid coord: " << v[0] << " " << v[1] << " " << v[2] << " Voxel index: " << index << std::endl;
+        auto it_prob = cell_occupancy_prob_.find(gridCoordToVoxelIndex(v));
+        ROS_ASSERT(it_prob != cell_occupancy_prob_.end());
+        float p = it_prob->second;
+        if (p > 0.6)
+          break;
+        entropy += -p * log(p) - (1.0f - p) * log(1.0f - p);
+      }
     }
     // std::cout << "Entropy from this ray cast: " << entropy << std::endl;
     return entropy;

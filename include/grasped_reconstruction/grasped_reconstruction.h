@@ -52,3 +52,4 @@
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <pcl/filters/crop_hull.h>
 #include <grasped_reconstruction/CalculateNbv.h>
+#include <grasped_reconstruction/CaptureAndProcessObservation.h>
