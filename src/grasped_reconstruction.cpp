@@ -16,7 +16,7 @@ public:
     // color_sub = nh_.subscribe("/camera/depth/points", 1, &GraspedReconstruction::colorClbk, this);
     save_eef_pose_sub = nh_.subscribe("/save_current_eef_pose", 1, &GraspedReconstruction::saveCurrentEefPoseClbk, this);
     occ_pub = n.advertise<sensor_msgs::PointCloud2>("occluded_voxels", 1);
-    // combo_pub = n.advertise<sensor_msgs::PointCloud2>("combo", 1);
+    combo_pub = n.advertise<sensor_msgs::PointCloud2>("part_occ", 1);
     object_pub = n.advertise<sensor_msgs::PointCloud2>("segmented_object", 1);
     tabletop_pub = n.advertise<sensor_msgs::PointCloud2>("tabletop", 1);
     entropy_arrow_pub = n.advertise<visualization_msgs::MarkerArray>("entropy_arrows", 1);
@@ -43,7 +43,7 @@ public:
   tf::TransformListener listener;
   tf::TransformBroadcaster broadcaster;
   std::unordered_map<std::string, tf::StampedTransform> eef_pose_keyframes;
-  tf::StampedTransform objorig_T_w_;
+  tf::StampedTransform objorig_T_w_, origbb_T_w_;
   tf2_ros::StaticTransformBroadcaster static_broadcaster;
   int rMax, rMin, gMax, gMin, bMax, bMin;
   PointCloud combo_orig, orig_observed_, orig_unobserved_, combo_curr;
@@ -225,6 +225,23 @@ public:
     }
   }
 
+  void saveInitialBoundingBox()
+  {
+    std::cout << "Saving initial bounding box" << std::endl;
+    try
+    {
+      ros::Time now = ros::Time::now();
+      listener.waitForTransform("/world", "/orig_bb",
+                                now, ros::Duration(3.0));
+      listener.lookupTransform("/world", "/orig_bb",
+                               now, origbb_T_w_);
+    }
+    catch (tf::TransformException ex)
+    {
+      ROS_ERROR("%s", ex.what());
+    }
+  }
+
   void initializeVoxelGrid()
   {
     std::cout << "Initializing voxel grid" << std::endl;
@@ -386,8 +403,9 @@ public:
     tf.setOrigin(tf::Vector3(ps.pose.position.x, ps.pose.position.y, ps.pose.position.z));
     tf.setRotation(tf::Quaternion(ps.pose.orientation.x, ps.pose.orientation.y, ps.pose.orientation.z, ps.pose.orientation.w));
     pcl_ros::transformPointCloud(*hullCloud, *hullCloud, tf);
-    for (const auto &pt: *hullCloud){
-      std::cout<<pt<<std::endl;
+    for (const auto &pt : *hullCloud)
+    {
+      std::cout << pt << std::endl;
     }
     boost::shared_ptr<PointCloud> hullPoints(new PointCloud());
     std::vector<pcl::Vertices> hullPolygons;
@@ -449,7 +467,9 @@ public:
     bb_pub.publish(marker);
     std::cout << "Published bounding box marker!" << std::endl;
     // tf::TransformStamped
-    tf::Transform t(objorig_T_w_); // maybe a bug source here??!
+    tf::Transform t;
+    t.setOrigin(tf::Vector3(orig_bb_min_.x, orig_bb_min_.y, orig_bb_min_.z));
+    t.setRotation(tf::Quaternion(0, 0, 0, 1));
     geometry_msgs::TransformStamped static_transformStamped;
 
     static_transformStamped.header.stamp = ros::Time::now();
@@ -616,26 +636,26 @@ public:
       pcl::PassThrough<pcl::PointXYZ> pass;
       pass.setInputCloud(cloud);
       pass.setFilterFieldName("z");
-      pass.setFilterLimits(-0.5, 0.73);
+      pass.setFilterLimits(-0.5, TABLETOP_HEIGHT);
       pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
-      pass.filter(*cloud);
+      // pass.filter(*cloud);
 
       pass.setFilterFieldName("x");
       pass.setFilterLimits(-0.1, 0.3);
       pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
-      pass.filter(*cloud);
+      // pass.filter(*cloud);
 
       pass.setFilterFieldName("y");
-      pass.setFilterLimits(-0.1, 0.1);
+      pass.setFilterLimits(-0.2, 0.2);
       pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
-      pass.filter(*cloud);
-      std::cout << "Removed floor" << std::endl;
+      // pass.filter(*cloud);
+      // std::cout << "Removed floor" << std::endl;
 
       // Downsample this pc
       pcl::VoxelGrid<pcl::PointXYZ> downsample;
       downsample.setInputCloud(cloud);
       downsample.setLeafSize(LEAF_SIZE, LEAF_SIZE, LEAF_SIZE);
-      downsample.filter(*cloud);
+      // downsample.filter(*cloud);
 
       pcl::PCLPointCloud2 cloud_filtered2;
 
@@ -650,7 +670,7 @@ public:
       occ.initializeVoxelGrid();
 
       Eigen::Vector3i box = occ.getMaxBoxCoordinates();
-
+      std::cout<<"box in unobs: \n"<<box.matrix()<<std::endl;
       PointCloud cloud_filtered = occ.getFilteredPointCloud();
       std::vector<Eigen::Vector3i> occluded_voxels;
       occ.occlusionEstimationAll(occluded_voxels);
@@ -664,19 +684,28 @@ public:
 
       //convert to world
       cloud_occluded->header.frame_id = "lens_link";
+      PointCloud::Ptr cloud_occluded_world(new PointCloud);
+      cloud_occluded_world->header.frame_id = "world";
       std::cout << "here3" << std::endl;
-      pcl_ros::transformPointCloud(target_frame, *cloud_occluded, *cloud_occluded, listener);
+      pcl_ros::transformPointCloud(target_frame, *cloud_occluded, *cloud_occluded_world, listener);
       std::cout << "here4" << std::endl;
 
-      pass.setInputCloud(cloud_occluded);
+      pass.setInputCloud(cloud_occluded_world);
       pass.setFilterFieldName("z");
-      pass.setFilterLimits(-0.5, 0.73);
+      pass.setFilterLimits(-0.5, TABLETOP_HEIGHT);
       pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
-      pass.filter(*cloud_occluded);
-      orig_unobserved_ = *cloud_occluded;
+      pass.filter(*cloud_occluded_world);
+      pass.setFilterFieldName("x");
+      pass.setFilterLimits(0.0, 0.4);
+      pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
+      pass.setFilterFieldName("y");
+      pass.setFilterLimits(-0.2, 0.2);
+      pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
+      pass.filter(*cloud_occluded_world);
+      orig_unobserved_ = *cloud_occluded_world;
       orig_unobserved_set_ = true;
 
-      pcl::toPCLPointCloud2(*cloud_occluded, cloud_filtered2);
+      pcl::toPCLPointCloud2(*cloud_occluded_world, cloud_filtered2);
 
       sensor_msgs::PointCloud2Ptr output(new sensor_msgs::PointCloud2());
 
@@ -765,7 +794,6 @@ public:
     {
       float e = calculateViewEntropy(v, finger_occluded_voxels);
       view_entropies.push_back(e);
-      std::cout << "Origin: " << v[0] << " " << v[1] << " " << v[2] << " Entropy: " << e << std::endl;
       if (e > entropy)
       {
         best_view = v;
@@ -774,6 +802,7 @@ public:
       }
       view_id++;
     }
+    std::cout << "Origin: " << best_view[0] << " " << best_view[1] << " " << best_view[2] << " Entropy: " << entropy << std::endl;
     return nbv_orientations_[best_view_id];
   }
 
@@ -881,9 +910,9 @@ public:
   Eigen::Vector4f gridCoordToWorldCoord(const Eigen::Vector3i &grid_coord)
   {
     Eigen::Vector4f v;
-    v[0] = (grid_coord(0) + 0.5f) * leaf_size_[0] + objorig_T_w_.getOrigin().getX();
-    v[1] = (grid_coord(1) + 0.5f) * leaf_size_[1] + objorig_T_w_.getOrigin().getY();
-    v[2] = (grid_coord(2) + 0.5f) * leaf_size_[2] + objorig_T_w_.getOrigin().getZ();
+    v[0] = (grid_coord(0) + 0.5f) * leaf_size_[0] + origbb_T_w_.getOrigin().getX();
+    v[1] = (grid_coord(1) + 0.5f) * leaf_size_[1] + origbb_T_w_.getOrigin().getY();
+    v[2] = (grid_coord(2) + 0.5f) * leaf_size_[2] + origbb_T_w_.getOrigin().getZ();
     v[3] = 0.0f;
     // std::cout << "grid coord: " << grid_coord.matrix() << " world coord:" << v.matrix() << std::endl;
     return v;
@@ -1102,6 +1131,7 @@ int main(int argc, char **argv)
       gr.saveInitialObjectPose();
       gr.saveOpenGripperConfiguration();
       gr.initializeVoxelGrid();
+      gr.saveInitialBoundingBox();
       gr.generateViewCandidates();
     }
     ros::spinOnce();
