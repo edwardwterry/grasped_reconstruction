@@ -6,14 +6,14 @@ typedef std::unordered_map<int, std::pair<pcl::PointXYZ, float>> IndexedPointsWi
 class GraspedReconstruction
 {
 public:
-  GraspedReconstruction(ros::NodeHandle &n) : nh_(n)
+  GraspedReconstruction(ros::NodeHandle &n) : nh_(n), anytime_pc_(new sensor_msgs::PointCloud2)
   {
     nh_ = n;
     calc_observed_points_sub = nh_.subscribe("/camera/depth/points", 1, &GraspedReconstruction::calculateObservedPointsClbk, this);
     calc_unobserved_points_sub = nh_.subscribe("/camera/depth/points", 1, &GraspedReconstruction::calculateUnobservedPointsClbk, this);
     pc_anytime_sub = nh_.subscribe("/camera/depth/points", 1, &GraspedReconstruction::pcAnytimeClbk, this);
     gm_sub = nh_.subscribe("/elevation_mapping/elevation_map", 1, &GraspedReconstruction::gmClbk, this);
-    color_sub = nh_.subscribe("/camera/depth/points", 1, &GraspedReconstruction::colorClbk, this);
+    // color_sub = nh_.subscribe("/camera/depth/points", 1, &GraspedReconstruction::colorClbk, this);
     save_eef_pose_sub = nh_.subscribe("/save_current_eef_pose", 1, &GraspedReconstruction::saveCurrentEefPoseClbk, this);
     occ_pub = n.advertise<sensor_msgs::PointCloud2>("occluded_voxels", 1);
     combo_pub = n.advertise<sensor_msgs::PointCloud2>("combo", 1);
@@ -36,7 +36,7 @@ public:
   }
 
   ros::NodeHandle nh_;
-  ros::Subscriber pc_sub, gm_sub, occ_sub, save_eef_pose_sub, pc_anytime_sub, color_sub;
+  ros::Subscriber calc_observed_points_sub, gm_sub, calc_unobserved_points_sub, save_eef_pose_sub, pc_anytime_sub, color_sub;
   ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub, entropy_arrow_pub, nbv_pub, anytime_pub, anytime_pub2;
   ros::ServiceServer calculate_nbv_service_, capture_and_process_observation_service_;
   image_transport::Publisher hm_im_pub;
@@ -64,7 +64,7 @@ public:
   PointCloud occluding_finger_points_;
   std::vector<Eigen::Vector4f> nbv_origins_;
   std::vector<Eigen::Quaternionf> nbv_orientations_;
-  sensor_msgs::PointCloud2ConstPtr anytime_pc_(new sensor_msgs::PointCloud2);
+  sensor_msgs::PointCloud2Ptr anytime_pc_;//(new sensor_msgs::PointCloud2);
 
   enum VoxelState
   {
@@ -86,11 +86,11 @@ public:
   tf::StampedTransform pi_T_fbl_, th_T_fbl_, in_T_fbl_;
   float FINGER_SCALE_FACTOR = 1.3f;
 
-  bool captureAndProcessObservation(GraspedReconstruction::CaptureAndProcessObservation::Request &req, GraspedReconstruction::CaptureAndProcessObservation::Request &res)
+  bool captureAndProcessObservation(grasped_reconstruction::CaptureAndProcessObservation::Request &req, grasped_reconstruction::CaptureAndProcessObservation::Request &res)
   {
     sensor_msgs::PointCloud2Ptr msg_transformed(new sensor_msgs::PointCloud2());
     std::string target_frame("world");
-    pcl_ros::transformPointCloud(target_frame, *anytime_pc, *msg_transformed, listener);
+    pcl_ros::transformPointCloud(target_frame, *anytime_pc_, *msg_transformed, listener);
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>());
     pcl::fromROSMsg(*msg_transformed, *cloud);
 
@@ -259,7 +259,7 @@ public:
     vg_initialized_ = true;
   }
 
-  bool calculateNbv(GraspedReconstruction::CalculateNbv::Request &req, GraspedReconstruction::CalculateNbv::Response &res)
+  bool calculateNbv(grasped_reconstruction::CalculateNbv::Request &req, grasped_reconstruction::CalculateNbv::Response &res)
   {
     std::vector<float> view_entropies;
     std::vector<float> best_view_entropies;
@@ -267,13 +267,18 @@ public:
     geometry_msgs::PoseStamped best_eef_pose;
     std::set<int> finger_occluded_voxels;
     Eigen::Quaternionf best_view;
-    for (size_t i = 0; i < req.poses.size(); i++) // go through every candidate pose
+    // for (size_t i = 0; i < req.eef_poses.poses.size(); i++) // go through every candidate pose
+    for (auto it = req.eef_poses.poses.begin(); it != req.eef_poses.poses.end(); it++) // go through every candidate pose
     {
-      geometry_msgs::PoseStamped ps = req.poses[i];
+      // geometry_msgs::PoseStamped ps = req.eef_poses.poses[i];
+      geometry_msgs::PoseStamped ps;
+      ps.pose = *it;
+      ps.header.frame_id = "/world";
       getVoxelIdsOccludedByFingers(ps, finger_occluded_voxels);
       Eigen::Quaternionf best_view_per_pose = calculateNextBestView(finger_occluded_voxels, view_entropies);
       float max_entropy = *std::max_element(view_entropies.begin(), view_entropies.end());
-      if (i == 0)
+      // if (i == 0)
+      if (it == req.eef_poses.poses.begin())
         ROS_ASSERT(max_entropy > 0.0f);
       if (max_entropy > highest_entropy)
       {
