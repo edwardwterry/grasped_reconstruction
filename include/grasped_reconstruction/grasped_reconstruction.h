@@ -51,3 +51,4 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <pcl/filters/crop_hull.h>
+#include <grasped_reconstruction/CalculateNbv.h>
