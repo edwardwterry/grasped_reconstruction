@@ -23,6 +23,7 @@ public:
     bb_pub = n.advertise<visualization_msgs::Marker>("bbox", 1);
     anytime_pub = n.advertise<sensor_msgs::PointCloud2>("anytime", 1);
     cf_pub = n.advertise<sensor_msgs::PointCloud2>("color_filtered", 1);
+    ch_points_pub = n.advertise<visualization_msgs::MarkerArray>("ch_points", 1);
     image_transport::ImageTransport it(n);
     hm_im_pub = it.advertise("height_map_image", 1);
 
@@ -37,7 +38,7 @@ public:
 
   ros::NodeHandle nh_;
   ros::Subscriber calc_observed_points_sub, gm_sub, calc_unobserved_points_sub, save_eef_pose_sub, pc_anytime_sub, color_sub;
-  ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub, entropy_arrow_pub, nbv_pub, anytime_pub, anytime_pub2;
+  ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub, entropy_arrow_pub, nbv_pub, anytime_pub, ch_points_pub;
   ros::ServiceServer calculate_nbv_service_, capture_and_process_observation_service_;
   image_transport::Publisher hm_im_pub;
   tf::TransformListener listener;
@@ -72,6 +73,9 @@ public:
     FREE,
     UNOBSERVED,
   };
+
+  int num_observed_clbks = 0;
+  int num_unobserved_clbks = 0;
 
   std::unordered_map<int, float> probability_by_state_;
 
@@ -409,7 +413,7 @@ public:
     }
     boost::shared_ptr<PointCloud> hullPoints(new PointCloud());
     std::vector<pcl::Vertices> hullPolygons;
-
+    publishConvexHullMarker(*hullCloud);
     // setup hull filter
     pcl::ConvexHull<pcl::PointXYZ> cHull;
     cHull.setInputCloud(hullCloud);
@@ -441,6 +445,32 @@ public:
     boost::shared_ptr<PointCloud> filtered(new PointCloud());
     cropHullFilter.filter(*filtered);
     std::cout << "Proportion occluded by fingers: " << float(filtered->size()) / float(num_voxels_) << std::endl;
+  }
+
+  void publishConvexHullMarker(const PointCloud &cloud)
+  {
+    visualization_msgs::MarkerArray ma;
+    for (auto it = cloud.begin(); it != cloud.end(); it++)
+    {
+      visualization_msgs::Marker marker;
+      marker.header.frame_id = "world";
+      marker.header.stamp = ros::Time();
+      marker.type = visualization_msgs::Marker::CUBE;
+      marker.action = visualization_msgs::Marker::ADD;
+      marker.pose.position.x = it->x;
+      marker.pose.position.y = it->y;
+      marker.pose.position.z = it->z;
+      // direction between view origin and object
+      marker.scale.x = 0.01;
+      marker.scale.y = 0.01;
+      marker.scale.z = 0.01;
+      marker.color.a = 1.0; // Don't forget to set the alpha!
+      marker.color.r = 0.0;
+      marker.color.g = 0.0;
+      marker.color.b = 1.0;
+      ma.markers.push_back(marker);
+    }
+    ch_points_pub.publish(ma);
   }
 
   void publishBoundingBoxMarker()
@@ -558,57 +588,68 @@ public:
   {
     if (!orig_observed_set_)
     {
-      std::cout << "Processing point cloud callback" << std::endl;
-      // http://wiki.ros.org/pcl/Tutorials#pcl.2BAC8-Tutorials.2BAC8-hydro.sensor_msgs.2BAC8-PointCloud2
-      // Convert the sensor_msgs/PointCloud2 data to pcl/PointCloud
-      sensor_msgs::PointCloud2Ptr msg_transformed(new sensor_msgs::PointCloud2());
-      std::string target_frame("world");
-      pcl_ros::transformPointCloud(target_frame, *msg, *msg_transformed, listener);
-      PointCloud::Ptr cloud(new PointCloud());
-      pcl::fromROSMsg(*msg_transformed, *cloud);
+      try
+      {
+        std::cout << "Processing point cloud callback" << std::endl;
+        // http://wiki.ros.org/pcl/Tutorials#pcl.2BAC8-Tutorials.2BAC8-hydro.sensor_msgs.2BAC8-PointCloud2
+        // Convert the sensor_msgs/PointCloud2 data to pcl/PointCloud
+        sensor_msgs::PointCloud2Ptr msg_transformed(new sensor_msgs::PointCloud2());
+        std::string target_frame("world");
+        pcl_ros::transformPointCloud(target_frame, *msg, *msg_transformed, listener);
+        PointCloud::Ptr cloud(new PointCloud());
+        pcl::fromROSMsg(*msg_transformed, *cloud);
 
-      // remove the ground plane
-      // http://pointclouds.org/documentation/tutorials/passthrough.php
-      pcl::PassThrough<pcl::PointXYZ> pass;
-      pass.setInputCloud(cloud);
-      pass.setFilterFieldName("z");
-      pass.setFilterLimits(-0.5, 0.5);
-      pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
-      pass.filter(*cloud);
+        // remove the ground plane
+        // http://pointclouds.org/documentation/tutorials/passthrough.php
+        pcl::PassThrough<pcl::PointXYZ> pass;
+        pass.setInputCloud(cloud);
+        pass.setFilterFieldName("z");
+        pass.setFilterLimits(-0.5, 0.5);
+        pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
+        pass.filter(*cloud);
 
-      pass.setFilterFieldName("x");
-      pass.setFilterLimits(0, 0.4);
-      pass.setFilterLimitsNegative(false); // allow to pass what is inside of this range
-      pass.filter(*cloud);
+        pass.setFilterFieldName("x");
+        pass.setFilterLimits(0, 0.4);
+        pass.setFilterLimitsNegative(false); // allow to pass what is inside of this range
+        pass.filter(*cloud);
 
-      pass.setFilterFieldName("y");
-      pass.setFilterLimits(-0.4, 0.2);
-      pass.setFilterLimitsNegative(false); // allow to pass what is inside of this range
-      pass.filter(*cloud);
+        pass.setFilterFieldName("y");
+        pass.setFilterLimits(-0.4, 0.2);
+        pass.setFilterLimitsNegative(false); // allow to pass what is inside of this range
+        pass.filter(*cloud);
 
-      // Downsample this pc
-      pcl::VoxelGrid<pcl::PointXYZ> downsample;
-      downsample.setInputCloud(cloud);
-      downsample.setLeafSize(LEAF_SIZE, LEAF_SIZE, LEAF_SIZE);
-      downsample.filter(*cloud);
+        // Downsample this pc
+        pcl::VoxelGrid<pcl::PointXYZ> downsample;
+        downsample.setInputCloud(cloud);
+        downsample.setLeafSize(LEAF_SIZE, LEAF_SIZE, LEAF_SIZE);
+        // downsample.filter(*cloud);
 
-      sensor_msgs::PointCloud2 cloud_cropped_with_partial_tabletop;
-      pcl::toROSMsg(*cloud, cloud_cropped_with_partial_tabletop);
-      tabletop_pub.publish(cloud_cropped_with_partial_tabletop); // publish the object and a bit of the tabletop to assist height map
-      std::cout << "Published cloud cropped with partial tabletop" << std::endl;
+        sensor_msgs::PointCloud2 cloud_cropped_with_partial_tabletop;
+        pcl::toROSMsg(*cloud, cloud_cropped_with_partial_tabletop);
+        tabletop_pub.publish(cloud_cropped_with_partial_tabletop); // publish the object and a bit of the tabletop to assist height map
+        std::cout << "Published cloud cropped with partial tabletop" << std::endl;
 
-      pass.setInputCloud(cloud);
-      pass.setFilterFieldName("z");
-      pass.setFilterLimits(-0.5, TABLETOP_HEIGHT);
-      pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
-      pass.filter(*cloud);
+        pass.setInputCloud(cloud);
+        pass.setFilterFieldName("z");
+        pass.setFilterLimits(-0.5, TABLETOP_HEIGHT);
+        pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
+        pass.filter(*cloud);
 
-      orig_observed_ = *cloud;
-      orig_observed_set_ = true; // set to TRUE to stop it from going around again!
-      sensor_msgs::PointCloud2 cloud_cropped_with_no_tabletop;
-      pcl::toROSMsg(*cloud, cloud_cropped_with_no_tabletop);
-      object_pub.publish(cloud_cropped_with_no_tabletop);
-      std::cout << "Published cloud cropped with no tabletop" << std::endl;
+        orig_observed_ = *cloud;
+        num_observed_clbks++;
+        if (num_observed_clbks == 2)
+        {
+          orig_observed_set_ = true; // set to TRUE to stop it from going around again!
+        }
+        sensor_msgs::PointCloud2 cloud_cropped_with_no_tabletop;
+        pcl::toROSMsg(*cloud, cloud_cropped_with_no_tabletop);
+        object_pub.publish(cloud_cropped_with_no_tabletop);
+        std::cout << "Published cloud cropped with no tabletop" << std::endl;
+      }
+      catch (tf::TransformException ex)
+      {
+        ROS_ERROR("%s", ex.what());
+      }
     }
   }
 
@@ -660,17 +701,22 @@ public:
       pcl::PCLPointCloud2 cloud_filtered2;
 
       std::cout << "here1" << std::endl;
-      pcl_ros::transformPointCloud(lens_frame, *cloud, *cloud, listener);
+      cloud->header.frame_id = "/world";
+      PointCloud::Ptr cloud2(new PointCloud());
+      cloud2->header.frame_id = lens_frame;
+
+      pcl_ros::transformPointCloud(lens_frame, *cloud, *cloud2, listener);
       std::cout << "here2" << std::endl;
 
       pcl::VoxelGridOcclusionEstimation<pcl::PointXYZ> occ;
 
-      occ.setInputCloud(cloud);
+      occ.setInputCloud(cloud2);
       occ.setLeafSize(LEAF_SIZE, LEAF_SIZE, LEAF_SIZE);
       occ.initializeVoxelGrid();
 
       Eigen::Vector3i box = occ.getMaxBoxCoordinates();
-      std::cout<<"box in unobs: \n"<<box.matrix()<<std::endl;
+      std::cout << "box in unobs: \n"
+                << box.matrix() << std::endl;
       PointCloud cloud_filtered = occ.getFilteredPointCloud();
       std::vector<Eigen::Vector3i> occluded_voxels;
       occ.occlusionEstimationAll(occluded_voxels);
@@ -703,8 +749,11 @@ public:
       pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
       pass.filter(*cloud_occluded_world);
       orig_unobserved_ = *cloud_occluded_world;
-      orig_unobserved_set_ = true;
-
+      num_unobserved_clbks++;
+      if (num_unobserved_clbks == 2)
+      {
+        orig_unobserved_set_ = true; // set to TRUE to stop it from going around again!
+      }
       pcl::toPCLPointCloud2(*cloud_occluded_world, cloud_filtered2);
 
       sensor_msgs::PointCloud2Ptr output(new sensor_msgs::PointCloud2());
@@ -716,6 +765,116 @@ public:
       // Publish the data
       occ_pub.publish(*output);
     }
+    /*if (num_unobserved_clbks <3)
+    {
+      try
+      {
+        std::cout << "Processing occlusion callback" << std::endl;
+        // http://wiki.ros.org/pcl/Tutorials#pcl.2BAC8-Tutorials.2BAC8-hydro.sensor_msgs.2BAC8-PointCloud2
+        // Convert the sensor_msgs/PointCloud2 data to pcl/PointCloud
+        sensor_msgs::PointCloud2Ptr msg_transformed(new sensor_msgs::PointCloud2());
+        std::string target_frame("world");
+        std::string lens_frame("lens_link");
+        pcl_ros::transformPointCloud(target_frame, *cloud_msg, *msg_transformed, listener);
+        PointCloud::Ptr cloud(new PointCloud());
+        pcl::fromROSMsg(*msg_transformed, *cloud);
+
+        // remove the ground plane
+        // http://pointclouds.org/documentation/tutorials/passthrough.php
+        pcl::PassThrough<pcl::PointXYZ> pass;
+        pass.setInputCloud(cloud);
+        pass.setFilterFieldName("z");
+        pass.setFilterLimits(-0.5, TABLETOP_HEIGHT);
+        pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
+        pass.filter(*cloud);
+
+        pass.setFilterFieldName("x");
+        pass.setFilterLimits(0, 0.4);
+        pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
+        pass.filter(*cloud);
+
+        pass.setFilterFieldName("y");
+        pass.setFilterLimits(-0.2, 0.2);
+        pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
+        pass.filter(*cloud);
+        // std::cout << "Removed floor" << std::endl;
+
+        // Downsample this pc
+        pcl::VoxelGrid<pcl::PointXYZ> downsample;
+        downsample.setInputCloud(cloud);
+        downsample.setLeafSize(LEAF_SIZE, LEAF_SIZE, LEAF_SIZE);
+        // downsample.filter(*cloud);
+
+        pcl::PCLPointCloud2 cloud_filtered2;
+
+        std::cout << "here1" << std::endl;
+        // ros::Duration(1.0).sleep();
+        cloud->header.frame_id = lens_frame;
+        pcl_ros::transformPointCloud(lens_frame, *cloud, *cloud, listener);
+        std::cout << "here2" << std::endl;
+
+        pcl::VoxelGridOcclusionEstimation<pcl::PointXYZ> occ;
+
+        occ.setInputCloud(cloud);
+        std::cout << "here2a" << std::endl;
+        occ.setLeafSize(LEAF_SIZE, LEAF_SIZE, LEAF_SIZE);
+        std::cout << "here2b" << std::endl;
+        occ.initializeVoxelGrid();
+        std::cout << "here2c" << std::endl;
+
+        Eigen::Vector3i box = occ.getMaxBoxCoordinates();
+        std::cout << "box in unobs: \n"
+                  << box.matrix() << std::endl;
+        PointCloud cloud_filtered = occ.getFilteredPointCloud();
+        std::vector<Eigen::Vector3i> occluded_voxels;
+        occ.occlusionEstimationAll(occluded_voxels);
+        // std::cout << "Proportion occluded: " << (float)occluded_voxels.size() / (float)(box(0) * box(1) * box(2)) << std::endl;
+        PointCloud::Ptr cloud_occluded(new PointCloud);
+        for (const auto &voxel : occluded_voxels)
+        {
+          Eigen::Vector4f coord = occ.getCentroidCoordinate(voxel);
+          cloud_occluded->push_back(pcl::PointXYZ(coord(0), coord(1), coord(2)));
+        }
+
+        //convert to world
+        cloud_occluded->header.frame_id = "lens_link";
+        PointCloud::Ptr cloud_occluded_world(new PointCloud);
+        cloud_occluded_world->header.frame_id = "world";
+        std::cout << "here3" << std::endl;
+        pcl_ros::transformPointCloud(target_frame, *cloud_occluded, *cloud_occluded_world, listener);
+        std::cout << "here4" << std::endl;
+
+        pass.setInputCloud(cloud_occluded_world);
+        pass.setFilterFieldName("z");
+        pass.setFilterLimits(-0.5, TABLETOP_HEIGHT);
+        pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
+        // pass.filter(*cloud_occluded_world);
+        pass.setFilterFieldName("x");
+        pass.setFilterLimits(0.0, 0.4);
+        pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
+        pass.setFilterFieldName("y");
+        pass.setFilterLimits(-0.2, 0.2);
+        pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
+        // pass.filter(*cloud_occluded_world);
+        orig_unobserved_ = *cloud_occluded_world;
+        num_unobserved_clbks++;
+
+        pcl::toPCLPointCloud2(*cloud_occluded_world, cloud_filtered2);
+
+        sensor_msgs::PointCloud2Ptr output(new sensor_msgs::PointCloud2());
+
+        pcl_conversions::fromPCL(cloud_filtered2, *output);
+        output->header.frame_id = "world";
+        std::cout << "here5" << std::endl;
+
+        // Publish the data
+        occ_pub.publish(*output);
+      }
+      catch (tf::TransformException ex)
+      {
+        ROS_ERROR("%s", ex.what());
+      }
+    }*/
   }
 
   void gmClbk(const grid_map_msgs::GridMap::ConstPtr &msg)
