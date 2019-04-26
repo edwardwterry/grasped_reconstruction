@@ -523,61 +523,126 @@ public:
     sensor_msgs::PointCloud2Ptr msg_transformed(new sensor_msgs::PointCloud2());
     std::string target_frame("world");
     pcl_ros::transformPointCloud(target_frame, *msg, *msg_transformed, listener);
-    PointCloud::Ptr cloud_in(new PointCloud());
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_in(new pcl::PointCloud<pcl::PointXYZRGB>());
     pcl::fromROSMsg(*msg_transformed, *cloud_in);
+
+    pcl::ConditionAnd<pcl::PointXYZRGB>::Ptr color_cond(new pcl::ConditionAnd<pcl::PointXYZRGB>());
+    if (_n.hasParam("/rMax"))
+    {
+      color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("h", pcl::ComparisonOps::LT, rMax)));
+    }
+    if (_n.hasParam("/rMin"))
+    {
+      color_cond->addComparison(pcl::PackedHSIComparison<pcl::PointXYZRGB>::Ptr(new pcl::PackedHSIComparison<pcl::PointXYZRGB>("h", pcl::ComparisonOps::GT, rMin)));
+    }
+    // build the filter
+    pcl::ConditionalRemoval<pcl::PointXYZRGB> condrem;
+    condrem.setCondition(color_cond);
+    condrem.setInputCloud(cloud_in);
+    condrem.setKeepOrganized(false);
+
+    // apply filter
+    condrem.filter(*cloud_in);
+    // pcl::PCLPointCloud2 cloud_in_pc2;
+    // pcl::toPCLPointCloud2(*cloud_in, cloud_in_pc2);
+
     // pcl::fromROSMsg(*msg, *cloud_in);
     tf::Transform between, between2;
     if (eef_pose_keyframes.find("present") != eef_pose_keyframes.end() && eef_pose_keyframes.find("grasp") != eef_pose_keyframes.end())
     {
       {
-        between = eef_pose_keyframes.find("grasp")->second;                                                           //.inverseTimes(eef_pose_keyframes.find("present")->second);
-        between2 = eef_pose_keyframes.find("present")->second.inverseTimes(eef_pose_keyframes.find("grasp")->second); // orig
-        // between2 = eef_pose_keyframes.find("grasp")->second.inverseTimes(eef_pose_keyframes.find("present")->second);
+        // between = eef_pose_keyframes.find("grasp")->second;                                                           //.inverseTimes(eef_pose_keyframes.find("present")->second);
+        // between2 = eef_pose_keyframes.find("present")->second.inverseTimes(eef_pose_keyframes.find("grasp")->second); // orig
+        // // between2 = eef_pose_keyframes.find("grasp")->second.inverseTimes(eef_pose_keyframes.find("present")->second);
 
-        std::cout << "bet1: " << between.getOrigin().getX() << " " << between.getOrigin().getY() << " " << between.getOrigin().getZ() << std::endl;
-        std::cout << "bet2: " << between2.getOrigin().getX() << " " << between2.getOrigin().getY() << " " << between2.getOrigin().getZ() << std::endl;
-        std::cout << "bet1: " << between.getRotation()[0] << " " << between.getRotation()[1] << " " << between.getRotation()[2] << " " << between.getRotation()[3] << std::endl;
-        std::cout << "bet2: " << between2.getRotation()[0] << " " << between2.getRotation()[1] << " " << between2.getRotation()[2] << " " << between2.getRotation()[3] << std::endl;
-        // between.setOrigin(tf::Vector3(0, 0, 0));
-        // between2.setOrigin(tf::Vector3(0, 0, 0));
-        // between.setRotation(tf::Quaternion(0,0,0,1));
-        // between2.setRotation(tf::Quaternion(0,0,0,1));
-        PointCloud::Ptr cloud_out(new PointCloud());
-        tf::Transform betweent1, betweenr, betweenr2, betweent2;
-        // betweent1.setOrigin(tf::Vector3(eef_pose_keyframes.find("present")->second.getOrigin()));
-        betweent1.setOrigin(tf::Vector3(-eef_pose_keyframes.find("present")->second.getOrigin().getX(), -eef_pose_keyframes.find("present")->second.getOrigin().getY(), -eef_pose_keyframes.find("present")->second.getOrigin().getZ()));
-        betweenr.setRotation(tf::Quaternion(between2.getRotation()));
-        // betweenr.setRotation(tf::Quaternion(between2.getRotation()[0], between2.getRotation()[1], between2.getRotation()[2], between2.getRotation()[3]));
-        // betweenr2.setRotation(tf::Quaternion(between.getRotation()));
-        // betweent2.setRotation(tf::Quaternion(0,0,0,1));
-        betweent2.setOrigin(tf::Vector3(eef_pose_keyframes.find("grasp")->second.getOrigin().getX(), eef_pose_keyframes.find("grasp")->second.getOrigin().getY(), eef_pose_keyframes.find("grasp")->second.getOrigin().getZ()));
-        std::cout << eef_pose_keyframes.find("grasp")->second.getOrigin().getX() << " " << eef_pose_keyframes.find("grasp")->second.getOrigin().getY() << " " << eef_pose_keyframes.find("grasp")->second.getOrigin().getZ();
-        // betweent2.setOrigin(tf::Vector3(0.2,0,0.935));
-        pcl_ros::transformPointCloud(*cloud_in, *cloud_out, betweent1);
-        PointCloud::Ptr cloud_out2(new PointCloud());
-        PointCloud::Ptr cloud_out3(new PointCloud());
-        PointCloud::Ptr cloud_out4(new PointCloud());
+        // std::cout << "bet1: " << between.getOrigin().getX() << " " << between.getOrigin().getY() << " " << between.getOrigin().getZ() << std::endl;
+        // std::cout << "bet2: " << between2.getOrigin().getX() << " " << between2.getOrigin().getY() << " " << between2.getOrigin().getZ() << std::endl;
+        // std::cout << "bet1: " << between.getRotation()[0] << " " << between.getRotation()[1] << " " << between.getRotation()[2] << " " << between.getRotation()[3] << std::endl;
+        // std::cout << "bet2: " << between2.getRotation()[0] << " " << between2.getRotation()[1] << " " << between2.getRotation()[2] << " " << between2.getRotation()[3] << std::endl;
+        // // between.setOrigin(tf::Vector3(0, 0, 0));
+        // // between2.setOrigin(tf::Vector3(0, 0, 0));
+        // // between.setRotation(tf::Quaternion(0,0,0,1));
+        // // between2.setRotation(tf::Quaternion(0,0,0,1));
+        // pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_out(new pcl::PointCloud<pcl::PointXYZRGB>());
+        // tf::Transform betweent1, betweenr, betweenr2, betweent2;
+        // // betweent1.setOrigin(tf::Vector3(eef_pose_keyframes.find("present")->second.getOrigin()));
+        // betweent1.setOrigin(tf::Vector3(-eef_pose_keyframes.find("present")->second.getOrigin().getX(), -eef_pose_keyframes.find("present")->second.getOrigin().getY(), -eef_pose_keyframes.find("present")->second.getOrigin().getZ()));
+        // betweenr.setRotation(tf::Quaternion(between2.getRotation()));
+        // // betweenr.setRotation(tf::Quaternion(between2.getRotation()[0], between2.getRotation()[1], between2.getRotation()[2], between2.getRotation()[3]));
+        // // betweenr2.setRotation(tf::Quaternion(between.getRotation()));
+        // // betweent2.setRotation(tf::Quaternion(0,0,0,1));
+        // betweent2.setOrigin(tf::Vector3(eef_pose_keyframes.find("grasp")->second.getOrigin().getX(), eef_pose_keyframes.find("grasp")->second.getOrigin().getY(), eef_pose_keyframes.find("grasp")->second.getOrigin().getZ()));
+        // std::cout << eef_pose_keyframes.find("grasp")->second.getOrigin().getX() << " " << eef_pose_keyframes.find("grasp")->second.getOrigin().getY() << " " << eef_pose_keyframes.find("grasp")->second.getOrigin().getZ();
+        // // betweent2.setOrigin(tf::Vector3(0.2,0,0.935));
+        // pcl_ros::transformPointCloud(*cloud_in, *cloud_out, betweent1);
+        // pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_out2(new pcl::PointCloud<pcl::PointXYZRGB>());
+        // pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_out3(new pcl::PointCloud<pcl::PointXYZRGB>());
+        // pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_out4(new pcl::PointCloud<pcl::PointXYZRGB>());
 
-        pcl_ros::transformPointCloud(*cloud_out, *cloud_out2, betweenr);
-        // pcl_ros::transformPointCloud(*cloud_out2, *cloud_out3, betweenr2);
-        pcl_ros::transformPointCloud(*cloud_out2, *cloud_out4, betweent2);
-        // pcl::VoxelGrid<pcl::PointXYZ> downsample;
-        // downsample.setInputCloud(cloud_in);
-        // downsample.setLeafSize(LEAF_SIZE, LEAF_SIZE, LEAF_SIZE);
-        // downsample.filter(*cloud_out4);
-        pcl::PCLPointCloud2 cloud_filtered2;
-        pcl::toPCLPointCloud2(*cloud_out4, cloud_filtered2);
+        // pcl_ros::transformPointCloud(*cloud_out, *cloud_out2, betweent2);
+        // // pcl_ros::transformPointCloud(*cloud_out2, *cloud_out3, betweenr2);
+        // // pcl_ros::transformPointCloud(*cloud_out2, *cloud_out4, betweent2);
+        // // pcl::VoxelGrid<pcl::PointXYZ> downsample;
+        // // downsample.setInputCloud(cloud_in);
+        // // downsample.setLeafSize(LEAF_SIZE, LEAF_SIZE, LEAF_SIZE);
+        // // downsample.filter(*cloud_out4);
+
+        // pcl::PCLPointCloud2 cloud_filtered2;
+        // pcl::toPCLPointCloud2(*cloud_out2, cloud_filtered2);
 
         sensor_msgs::PointCloud2Ptr output(new sensor_msgs::PointCloud2());
 
-        // experiment!
-        betweent1.setOrigin(tf::Vector3(-eef_pose_keyframes.find("present")->second.getOrigin().getX(), -eef_pose_keyframes.find("present")->second.getOrigin().getY(), -eef_pose_keyframes.find("present")->second.getOrigin().getZ()));
+        // // experiment!
+        // betweent1.setOrigin(tf::Vector3(-eef_pose_keyframes.find("present")->second.getOrigin().getX(), -eef_pose_keyframes.find("present")->second.getOrigin().getY(), -eef_pose_keyframes.find("present")->second.getOrigin().getZ()));
 
-        // experiment end
+        // // experiment end
 
-        pcl_conversions::fromPCL(cloud_filtered2, *output);
+        // pcl_conversions::fromPCL(cloud_filtered2, *output);
+        // output->header.frame_id = "world";
+
+        // exp 2
+        Eigen::Matrix4f p_T_w, g_T_w, w_T_p, w_T_g;
+        pcl_ros::transformAsMatrix(eef_pose_keyframes.find("present")->second, p_T_w);
+        pcl_ros::transformAsMatrix(eef_pose_keyframes.find("grasp")->second, g_T_w);
+        std::cout << "\n p_T_w:\n"
+                  << (p_T_w).matrix() << std::endl;
+        std::cout << "\n g_T_w:\n"
+                  << (g_T_w).matrix() << std::endl;
+        w_T_p = Eigen::Matrix4f::Identity();
+        w_T_p.block(0,0,3,3) = p_T_w.block(0,0,3,3).transpose();
+        w_T_p.block(0,3,3,1) = -p_T_w.block(0,0,3,3).transpose() * p_T_w.block(0,3,3,1);
+        std::cout << "\n w_T_p:\n"
+                  << (w_T_p).matrix() << std::endl;
+        std::cout << "\n homog matrix:\n"
+                  << (w_T_p * g_T_w).matrix() << std::endl;
+        
+        for (auto it = cloud_in->begin(); it != cloud_in->end(); ++it){
+          Eigen::Matrix4f pt, tx, inv_pt;
+          pt = Eigen::Matrix4f::Identity();
+          tx = Eigen::Matrix4f::Identity();
+          inv_pt = Eigen::Matrix4f::Identity();
+          pt(0,3) = it->x;
+          pt(1,3) = it->y;
+          pt(2,3) = it->z;
+          std::cout<<"b: "<<*it<<std::endl;
+          inv_pt(0,3) = -it->x;
+          inv_pt(1,3) = -it->y;
+          inv_pt(2,3) = -it->z;
+          // tx = pt * (w_T_p * g_T_w);// * inv_pt;
+          tx = (g_T_w * w_T_p) * pt;
+          it->x = tx(0,3);
+          it->y = tx(1,3);
+          it->z = tx(2,3);
+          std::cout<<"a: "<<*it<<std::endl;
+        }
+        sensor_msgs::PointCloud2Ptr cloud_in_smpc2(new sensor_msgs::PointCloud2);
+        pcl::toROSMsg(*cloud_in, *cloud_in_smpc2);
+        sensor_msgs::PointCloud2 cloud_out_smpc2;
+        pcl_ros::transformPointCloud(Eigen::Matrix4f::Identity(), *cloud_in_smpc2, *output);
+        // pcl_conversions::fromPCL(cloud_out_smpc2, *output);
         output->header.frame_id = "world";
 
+        // end exp 2
         // Publish the data
         // while (anytime_pub.getNumSubscribers() < 1)
         // {
