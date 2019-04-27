@@ -192,6 +192,7 @@ public:
         Eigen::Matrix4f T = g_T_w * w_T_p;
         std::cout << "\n\n UPDATE OBSERVED POINTS \n\n"
                   << std::endl;
+        // first, take into account what you saw
         for (const auto &pt : *cloud)
         {
           getVoxelIdsOfPointsAtPresent(pt, T, voxel_ids_corresponding_to_observed_points);
@@ -229,27 +230,28 @@ public:
           Eigen::Vector4f direction;
           direction << target_voxel_w[0] - origin[0], target_voxel_w[1] - origin[1], target_voxel_w[2] - origin[2], 0.0f;
           direction.normalize();
-          std::cout << "Origin: " << origin[0] << " " << origin[1] << " " << origin[2] << " Direction: " << direction[0] << " " << direction[1] << " " << direction[2] << " Target Voxel : " << target_voxel[0] << " " << target_voxel[1] << " " << target_voxel[2] << std::endl;
-          std::cout << "Target: " << target_voxel_w[0] << " " << target_voxel_w[1] << " " << target_voxel_w[2] << std::endl;
+          // std::cout << "Origin: " << origin[0] << " " << origin[1] << " " << origin[2] << " Direction: " << direction[0] << " " << direction[1] << " " << direction[2] << " Target Voxel : " << target_voxel[0] << " " << target_voxel[1] << " " << target_voxel[2] << std::endl;
+          // std::cout << "Target: " << target_voxel_w[0] << " " << target_voxel_w[1] << " " << target_voxel_w[2] << std::endl;
 
           rayTraversal(out_ray, target_voxel, origin, direction);
           int default_state = Observation::FREE;
           bool occupied_voxel_has_been_passed = false;
+          std::unordered_map<int, int> apriori_cell_occupancy_state = cell_occupancy_state_;
           for (size_t i = 0; i < out_ray.size(); i++) // for each voxel the ray passed through
           {
             int index = gridCoordToVoxelIndex(out_ray[i]);
-            std::cout << "Grid coord: " << out_ray[i][0] << " " << out_ray[i][1]
-            << " " << out_ray[i][2] << " Voxel index: " << index << std::endl;
-            auto it_cell = cell_occupancy_state_.find(index);
-            auto it_visited = cell_visited.find(index);
+            // std::cout << "Grid coord: " << out_ray[i][0] << " " << out_ray[i][1]
+            // << " " << out_ray[i][2] << " Voxel index: " << index << " Current state: "<<apriori_cell_occupancy_state.find(index)->second<<std::endl;
+            auto it_cell = apriori_cell_occupancy_state.find(index);
+            // auto it_visited = cell_visited.find(index);
 
-            if (it_visited == cell_visited.end()) // if the voxel hasn't been included before
-            {
-              std::cout << "Adding cell index to list: " << index << std::endl;
-              cell_visited.insert(index);
+            // if (it_visited == cell_visited.end()) // if the voxel hasn't been included before
+            // {
+              // std::cout << "Adding cell index to list: " << index << std::endl;
+              // cell_visited.insert(index);
               if (occupied_voxel_has_been_passed)
               {
-                if (it_cell->second != Observation::FREE || it_cell->second != Observation::OCCUPIED)
+                if (it_cell->second != Observation::FREE && it_cell->second != Observation::OCCUPIED) // i.e, if it is UNOBSERVED
                 {
                   updateVoxelProbability(index, default_state);
                 }
@@ -260,13 +262,14 @@ public:
                 {
                   occupied_voxel_has_been_passed = true;
                   default_state = Observation::UNOBSERVED;
+                  // std::cout<<"Default state switched to UNOBS for voxel "<<i<<std::endl;
                 }
                 else
                 {
                   updateVoxelProbability(index, default_state);
                 }
               }
-            }
+            // }
           }
         }
 
