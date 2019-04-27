@@ -16,6 +16,7 @@ public:
     // color_sub = nh_.subscribe("/camera/depth/points", 1, &GraspedReconstruction::colorClbk, this);
     save_eef_pose_sub = nh_.subscribe("/save_current_eef_pose", 1, &GraspedReconstruction::saveCurrentEefPoseClbk, this);
     occ_pub = n.advertise<sensor_msgs::PointCloud2>("occluded_voxels", 1);
+    ch_pub = n.advertise<sensor_msgs::PointCloud2>("ch_filtered", 1);
     combo_pub = n.advertise<sensor_msgs::PointCloud2>("part_occ", 1);
     object_pub = n.advertise<sensor_msgs::PointCloud2>("segmented_object", 1);
     tabletop_pub = n.advertise<sensor_msgs::PointCloud2>("tabletop", 1);
@@ -38,7 +39,7 @@ public:
 
   ros::NodeHandle nh_;
   ros::Subscriber calc_observed_points_sub, gm_sub, calc_unobserved_points_sub, save_eef_pose_sub, pc_anytime_sub, color_sub;
-  ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub, entropy_arrow_pub, nbv_pub, anytime_pub, ch_points_pub;
+  ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub, entropy_arrow_pub, nbv_pub, anytime_pub, ch_points_pub, ch_pub;
   ros::ServiceServer calculate_nbv_service_, capture_and_process_observation_service_;
   image_transport::Publisher hm_im_pub;
   tf::TransformListener listener;
@@ -88,7 +89,7 @@ public:
 
   // gripper config
   tf::StampedTransform pi_T_fbl_, th_T_fbl_, in_T_fbl_;
-  float FINGER_SCALE_FACTOR = 1.3f;
+  float FINGER_SCALE_FACTOR = 1.2f;
 
   bool captureAndProcessObservation(grasped_reconstruction::CaptureAndProcessObservation::Request &req, grasped_reconstruction::CaptureAndProcessObservation::Request &res)
   {
@@ -406,36 +407,45 @@ public:
     tf::Transform tf;
     tf.setOrigin(tf::Vector3(ps.pose.position.x, ps.pose.position.y, ps.pose.position.z));
     tf.setRotation(tf::Quaternion(ps.pose.orientation.x, ps.pose.orientation.y, ps.pose.orientation.z, ps.pose.orientation.w));
+    // std::cout << tf.getOrigin().getX() << " " << tf.getOrigin().getY() << " " << tf.getOrigin().getZ() << " " << std::endl;
+    // std::cout << tf.getRotation()[0] << " " << tf.getRotation()[1] << " " << tf.getRotation()[2] << " " << tf.getRotation()[3] << std::endl;
+
     pcl_ros::transformPointCloud(*hullCloud, *hullCloud, tf);
     for (const auto &pt : *hullCloud)
     {
       std::cout << pt << std::endl;
     }
     boost::shared_ptr<PointCloud> hullPoints(new PointCloud());
+
     std::vector<pcl::Vertices> hullPolygons;
     publishConvexHullMarker(*hullCloud);
     // setup hull filter
     pcl::ConvexHull<pcl::PointXYZ> cHull;
     cHull.setInputCloud(hullCloud);
     cHull.reconstruct(*hullPoints, hullPolygons);
+    for (const auto &p : *hullPoints)
+    {
+      std::cout << "hp: " << p << std::endl;
+    }
     std::cout << "Created convex hull!" << std::endl;
 
     cropHullFilter.setHullIndices(hullPolygons);
     cropHullFilter.setHullCloud(hullPoints);
-    cropHullFilter.setDim(3);            // if you uncomment this, it will work
-    cropHullFilter.setCropOutside(true); // this will remove points inside the hull
+    cropHullFilter.setDim(3); // if you uncomment this, it will work
+    cropHullFilter.setCropOutside(false);
 
     // create point cloud
     boost::shared_ptr<PointCloud> pc(new PointCloud());
+
 
     // a point inside the hull
     for (size_t i = 0; i < num_voxels_; ++i)
     {
       Eigen::Vector4f w = voxelIndexToWorldCoord(i);
       pc->push_back(pcl::PointXYZ(w[0], w[1], w[2]));
-      std::cout << (*pc)[i] << std::endl;
+      // std::cout << w.matrix() << std::endl;
     }
-
+    pc->header.frame_id = "world";
     // for (size_t i = 0; i < pc->size(); ++i)
     // {
     // }
@@ -445,21 +455,31 @@ public:
     boost::shared_ptr<PointCloud> filtered(new PointCloud());
     cropHullFilter.filter(*filtered);
     std::cout << "Proportion occluded by fingers: " << float(filtered->size()) / float(num_voxels_) << std::endl;
+    pcl::PCLPointCloud2 cloud_filtered2;
+    pcl::toPCLPointCloud2(*pc, cloud_filtered2);
+    sensor_msgs::PointCloud2Ptr output(new sensor_msgs::PointCloud2());
+    pcl_conversions::fromPCL(cloud_filtered2, *output);
+    output->header.frame_id = "world";
+    // Publish the data
+    ch_pub.publish(*output);
   }
 
   void publishConvexHullMarker(const PointCloud &cloud)
   {
     visualization_msgs::MarkerArray ma;
+    int count = 0;
     for (auto it = cloud.begin(); it != cloud.end(); it++)
     {
       visualization_msgs::Marker marker;
       marker.header.frame_id = "world";
       marker.header.stamp = ros::Time();
+      marker.id = count;
       marker.type = visualization_msgs::Marker::CUBE;
       marker.action = visualization_msgs::Marker::ADD;
       marker.pose.position.x = it->x;
       marker.pose.position.y = it->y;
       marker.pose.position.z = it->z;
+      std::cout << *it << std::endl;
       // direction between view origin and object
       marker.scale.x = 0.01;
       marker.scale.y = 0.01;
@@ -469,6 +489,7 @@ public:
       marker.color.g = 0.0;
       marker.color.b = 1.0;
       ma.markers.push_back(marker);
+      count++;
     }
     ch_points_pub.publish(ma);
   }
@@ -744,6 +765,7 @@ public:
       pass.setFilterFieldName("x");
       pass.setFilterLimits(0.0, 0.4);
       pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
+      // pass.filter(*cloud_occluded_world);
       pass.setFilterFieldName("y");
       pass.setFilterLimits(-0.2, 0.2);
       pass.setFilterLimitsNegative(false); // allow to pass what is outside of this range
@@ -1054,10 +1076,11 @@ public:
     int temp;
     l = floor(index / (nr_ * nc_));
     temp = index % (nr_ * nc_);
-    c = temp % nc_;
-    r = floor(temp % nc_);
+    c = index % nc_;
+    r = floor(temp / nc_);
     Eigen::Vector3i v;
     v << r, c, l;
+    std::cout<<"index: "<<index<<" r: "<<r<<" c: "<<c<<" l: "<<l<<std::endl;
     return v;
   }
 
@@ -1073,7 +1096,7 @@ public:
     v[1] = (grid_coord(1) + 0.5f) * leaf_size_[1] + origbb_T_w_.getOrigin().getY();
     v[2] = (grid_coord(2) + 0.5f) * leaf_size_[2] + origbb_T_w_.getOrigin().getZ();
     v[3] = 0.0f;
-    // std::cout << "grid coord: " << grid_coord.matrix() << " world coord:" << v.matrix() << std::endl;
+    std::cout << "grid coord: " << grid_coord(0) <<" "<<grid_coord(1)<<" "<<grid_coord(2)<< " world coord:" << v(0) <<" "<<v(1)<<" "<<v(2) << std::endl;
     return v;
   }
 
