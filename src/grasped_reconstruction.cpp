@@ -162,20 +162,20 @@ public:
         Eigen::Matrix4f p_T_w, g_T_w, w_T_p, w_T_g;
         pcl_ros::transformAsMatrix(eef_pose_keyframes.find("present")->second, p_T_w);
         pcl_ros::transformAsMatrix(eef_pose_keyframes.find("grasp")->second, g_T_w);
-        std::cout << "\n p_T_w:\n"
-                  << (p_T_w).matrix() << std::endl;
-        std::cout << "\n g_T_w:\n"
-                  << (g_T_w).matrix() << std::endl;
+        // std::cout << "\n p_T_w:\n"
+        //           << (p_T_w).matrix() << std::endl;
+        // std::cout << "\n g_T_w:\n"
+        //           << (g_T_w).matrix() << std::endl;
         w_T_g = Eigen::Matrix4f::Identity();
         w_T_g.block(0, 0, 3, 3) = g_T_w.block(0, 0, 3, 3).transpose();
         w_T_g.block(0, 3, 3, 1) = -g_T_w.block(0, 0, 3, 3).transpose() * g_T_w.block(0, 3, 3, 1);
         w_T_p = Eigen::Matrix4f::Identity();
         w_T_p.block(0, 0, 3, 3) = p_T_w.block(0, 0, 3, 3).transpose();
         w_T_p.block(0, 3, 3, 1) = -p_T_w.block(0, 0, 3, 3).transpose() * p_T_w.block(0, 3, 3, 1);
-        std::cout << "\n w_T_g:\n"
-                  << (w_T_g).matrix() << std::endl;
-        std::cout << "\n homog matrix:\n"
-                  << (w_T_g * p_T_w).matrix() << std::endl;
+        // std::cout << "\n w_T_g:\n"
+        //           << (w_T_g).matrix() << std::endl;
+        // std::cout << "\n homog matrix:\n"
+        //           << (w_T_g * p_T_w).matrix() << std::endl;
         // PointCloud bb_voxel_cloud_at_present = bb_voxel_cloud_;
         /*for (auto it = bb_voxel_cloud_at_present.begin(); it !=
           bb_voxel_cloud_at_present.end(); ++it) // build list of voxels to have
@@ -190,8 +190,8 @@ public:
         std::set<int> voxel_ids_corresponding_to_observed_points;
         // std::set<int> voxel_ids_corresponding_to_unobserved_points;
         Eigen::Matrix4f T = g_T_w * w_T_p;
-        std::cout << "\n\n UPDATE OBSERVED POINTS \n\n"
-                  << std::endl;
+        // std::cout << "\n\n UPDATE OBSERVED POINTS \n\n"
+        //           << std::endl;
         // first, take into account what you saw
         for (const auto &pt : *cloud)
         {
@@ -247,28 +247,28 @@ public:
 
             // if (it_visited == cell_visited.end()) // if the voxel hasn't been included before
             // {
-              // std::cout << "Adding cell index to list: " << index << std::endl;
-              // cell_visited.insert(index);
-              if (occupied_voxel_has_been_passed)
+            // std::cout << "Adding cell index to list: " << index << std::endl;
+            // cell_visited.insert(index);
+            if (occupied_voxel_has_been_passed)
+            {
+              if (it_cell->second != Observation::FREE && it_cell->second != Observation::OCCUPIED) // i.e, if it is UNOBSERVED
               {
-                if (it_cell->second != Observation::FREE && it_cell->second != Observation::OCCUPIED) // i.e, if it is UNOBSERVED
-                {
-                  updateVoxelProbability(index, default_state);
-                }
+                updateVoxelProbability(index, default_state);
+              }
+            }
+            else
+            {
+              if (it_cell->second == Observation::OCCUPIED)
+              {
+                occupied_voxel_has_been_passed = true;
+                default_state = Observation::UNOBSERVED;
+                // std::cout<<"Default state switched to UNOBS for voxel "<<i<<std::endl;
               }
               else
               {
-                if (it_cell->second == Observation::OCCUPIED)
-                {
-                  occupied_voxel_has_been_passed = true;
-                  default_state = Observation::UNOBSERVED;
-                  // std::cout<<"Default state switched to UNOBS for voxel "<<i<<std::endl;
-                }
-                else
-                {
-                  updateVoxelProbability(index, default_state);
-                }
+                updateVoxelProbability(index, default_state);
               }
+            }
             // }
           }
         }
@@ -361,7 +361,7 @@ public:
       if (map.find(index) == map.end())
       {
         map.insert(index);                                // if not seen before
-        std::cout << "Add index: " << index << std::endl; // << " " << p_orig[1] << " " << p_orig[2] << " id: " << index << std::endl;
+        // std::cout << "Add index: " << index << std::endl; // << " " << p_orig[1] << " " << p_orig[2] << " id: " << index << std::endl;
       }
       else
       {
@@ -408,14 +408,14 @@ public:
   {
     auto it = cell_occupancy_state_.find(voxel);
     ROS_ASSERT(it != cell_occupancy_state_.end());
-    if (it->second != observation)
-    {
-      std::cout << "Index " << voxel << " changed from " << it->second << " to " << observation << std::endl;
-    }
-    else
-    {
-      std::cout << "Index " << voxel << " stayed at " << it->second << std::endl;
-    }
+    // if (it->second != observation)
+    // {
+    //   std::cout << "Index " << voxel << " changed from " << it->second << " to " << observation << std::endl;
+    // }
+    // else
+    // {
+    //   std::cout << "Index " << voxel << " stayed at " << it->second << std::endl;
+    // }
     it->second = observation;
   }
 
@@ -495,7 +495,7 @@ public:
       }
     }
 
-    std::cout << "cell occ state size: " << cell_occupancy_state_.size();
+    // std::cout << "cell occ state size: " << cell_occupancy_state_.size();
     // ROS_ASSERT(cell_occupancy_state_.size() == num_voxels_);
     // appendAndIncludePointCloudProb(orig_observed_, Observation::OCCUPIED);
     // appendAndIncludePointCloudProb(orig_unobserved_, Observation::UNOBSERVED);
@@ -670,6 +670,20 @@ public:
     tf.rotation.w = n_T_w.getRotation()[3];
     res.nbv = tf;
     res.eef_pose = best_eef_pose;
+
+    geometry_msgs::TransformStamped static_transformStamped;
+
+    static_transformStamped.header.stamp = ros::Time::now();
+    static_transformStamped.header.frame_id = "world";
+    static_transformStamped.child_frame_id = "nbv";
+    static_transformStamped.transform.translation.x = n_T_w.getOrigin().x();
+    static_transformStamped.transform.translation.y = n_T_w.getOrigin().y();
+    static_transformStamped.transform.translation.z = n_T_w.getOrigin().z();
+    static_transformStamped.transform.rotation.x = n_T_w.getRotation()[0];
+    static_transformStamped.transform.rotation.y = n_T_w.getRotation()[1];
+    static_transformStamped.transform.rotation.z = n_T_w.getRotation()[2];
+    static_transformStamped.transform.rotation.w = n_T_w.getRotation()[3];
+    static_broadcaster.sendTransform(static_transformStamped);
   }
 
   void publishEntropyArrowSphere(std::vector<float> view_entropies)
@@ -732,10 +746,10 @@ public:
     occluding_finger_points_.push_back(pcl::PointXYZ(th_T_fbl_.getOrigin().x() * FINGER_SCALE_FACTOR, th_T_fbl_.getOrigin().y() * FINGER_SCALE_FACTOR, th_T_fbl_.getOrigin().z() * FINGER_SCALE_FACTOR));
     occluding_finger_points_.push_back(pcl::PointXYZ(in_T_fbl_.getOrigin().x() * FINGER_SCALE_FACTOR, in_T_fbl_.getOrigin().y() * FINGER_SCALE_FACTOR, in_T_fbl_.getOrigin().z() * FINGER_SCALE_FACTOR));
     occluding_finger_points_.push_back(pcl::PointXYZ(pi_T_fbl_.getOrigin().x() * FINGER_SCALE_FACTOR, pi_T_fbl_.getOrigin().y() * FINGER_SCALE_FACTOR, pi_T_fbl_.getOrigin().z() * FINGER_SCALE_FACTOR));
-    for (const auto &pt : occluding_finger_points_)
-    {
-      std::cout << pt << std::endl;
-    }
+    // for (const auto &pt : occluding_finger_points_)
+    // {
+    //   std::cout << pt << std::endl;
+    // }
   }
 
   void getVoxelIdsOccludedByFingers(const geometry_msgs::PoseStamped &ps, std::set<int> finger_occluded_voxels)
@@ -754,10 +768,10 @@ public:
     // tf.getRotation()[2] << " " << tf.getRotation()[3] << std::endl;
 
     pcl_ros::transformPointCloud(*hullCloud, *hullCloud, tf);
-    for (const auto &pt : *hullCloud)
-    {
-      std::cout << pt << std::endl;
-    }
+    // for (const auto &pt : *hullCloud)
+    // {
+    //   std::cout << pt << std::endl;
+    // }
     boost::shared_ptr<PointCloud> hullPoints(new PointCloud());
 
     std::vector<pcl::Vertices> hullPolygons;
@@ -766,10 +780,10 @@ public:
     pcl::ConvexHull<pcl::PointXYZ> cHull;
     cHull.setInputCloud(hullCloud);
     cHull.reconstruct(*hullPoints, hullPolygons);
-    for (const auto &p : *hullPoints)
-    {
-      std::cout << "hp: " << p << std::endl;
-    }
+    // for (const auto &p : *hullPoints)
+    // {
+    //   std::cout << "hp: " << p << std::endl;
+    // }
     std::cout << "Created convex hull!" << std::endl;
 
     cropHullFilter.setHullIndices(hullPolygons);
@@ -935,13 +949,13 @@ public:
     {
       it->second = bb_bl;
     }
-    for (const auto &e : eef_pose_keyframes)
-    {
-      std::cout << e.first << std::endl;
-      std::cout << e.second.getOrigin().getX() << " " << e.second.getOrigin().getY() << " " << e.second.getOrigin().getZ() << " " << std::endl;
-      std::cout << e.second.getRotation()[0] << " " << e.second.getRotation()[1] << " " << e.second.getRotation()[2] << " " << e.second.getRotation()[3] << std::endl;
-      // std::cout<<e.second.getRotation()<<std::endl;
-    }
+    // for (const auto &e : eef_pose_keyframes)
+    // {
+    //   std::cout << e.first << std::endl;
+    //   std::cout << e.second.getOrigin().getX() << " " << e.second.getOrigin().getY() << " " << e.second.getOrigin().getZ() << " " << std::endl;
+    //   std::cout << e.second.getRotation()[0] << " " << e.second.getRotation()[1] << " " << e.second.getRotation()[2] << " " << e.second.getRotation()[3] << std::endl;
+    //   // std::cout<<e.second.getRotation()<<std::endl;
+    // }
   }
 
   void calculateObservedPointsClbk(const sensor_msgs::PointCloud2ConstPtr &msg)
@@ -1059,13 +1073,13 @@ public:
 
       pcl::PCLPointCloud2 cloud_filtered2;
 
-      std::cout << "here1" << std::endl;
+      // std::cout << "here1" << std::endl;
       cloud->header.frame_id = "/world";
       PointCloud::Ptr cloud2(new PointCloud());
       cloud2->header.frame_id = lens_frame;
 
       pcl_ros::transformPointCloud(lens_frame, *cloud, *cloud2, listener);
-      std::cout << "here2" << std::endl;
+      // std::cout << "here2" << std::endl;
 
       pcl::VoxelGridOcclusionEstimation<pcl::PointXYZ> occ;
 
@@ -1074,8 +1088,8 @@ public:
       occ.initializeVoxelGrid();
 
       Eigen::Vector3i box = occ.getMaxBoxCoordinates();
-      std::cout << "box in unobs: \n"
-                << box.matrix() << std::endl;
+      // std::cout << "box in unobs: \n"
+      //           << box.matrix() << std::endl;
       PointCloud cloud_filtered = occ.getFilteredPointCloud();
       std::vector<Eigen::Vector3i> occluded_voxels;
       occ.occlusionEstimationAll(occluded_voxels);
@@ -1092,9 +1106,9 @@ public:
       cloud_occluded->header.frame_id = "lens_link";
       PointCloud::Ptr cloud_occluded_world(new PointCloud);
       cloud_occluded_world->header.frame_id = "world";
-      std::cout << "here3" << std::endl;
+      // std::cout << "here3" << std::endl;
       pcl_ros::transformPointCloud(target_frame, *cloud_occluded, *cloud_occluded_world, listener);
-      std::cout << "here4" << std::endl;
+      // std::cout << "here4" << std::endl;
 
       pass.setInputCloud(cloud_occluded_world);
       pass.setFilterFieldName("z");
@@ -1121,7 +1135,7 @@ public:
 
       pcl_conversions::fromPCL(cloud_filtered2, *output);
       output->header.frame_id = "world";
-      std::cout << "here5" << std::endl;
+      // std::cout << "here5" << std::endl;
 
       // Publish the data
       occ_pub.publish(*output);

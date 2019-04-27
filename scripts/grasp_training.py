@@ -149,7 +149,7 @@ class GraspDataCollection:
             dummy.rotation.y = 0.5
             dummy.rotation.z = 0.5
             dummy.rotation.w = -0.5
-            self.nbv_tf = dummy
+            # self.nbv_tf = dummy
             
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
@@ -381,7 +381,7 @@ class GraspDataCollection:
             # print '\nIK message:', ik
             res = req(ik)
             outcome = res.error_code.val
-            print res
+            # print res
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
         js = {}
@@ -427,7 +427,7 @@ class GraspDataCollection:
             th = 0.0  # np.random.uniform(0.0, math.pi * 2.0)
             self.grasp_theta = th
         elif phase == 'nbv_eval':
-            th = np.random.uniform(0.0, math.pi * 2.0)
+            th = 0.0 # np.random.uniform(0.0, math.pi * 2.0)
             print 'theta of grasp candidate: ', th
         # https://www.programcreek.com/python/example/70252/geometry_msgs.msg.PoseStamped
         ps = PoseStamped()
@@ -686,7 +686,7 @@ class GraspDataCollection:
             msg = Bool()
             msg.data = True
             res = req(msg)
-            print res
+            # print res
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
 
