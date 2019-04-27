@@ -241,30 +241,28 @@ public:
       marker.scale.x = 0.005;
       marker.scale.y = 0.005;
       marker.scale.z = 0.005;
-      float r, g, b;
       int state = cell_occupancy_state_.find(i)->second;
       if (state == Observation::FREE)
       {
-        r = 1.0;
-        g = 1.0;
-        b = 1.0;
+        marker.color.r = 1.0f;
+        marker.color.g = 1.0f;
+        marker.color.b = 1.0f;
       }
       else if (state == Observation::OCCUPIED)
       {
-        r = 0.0;
-        g = 1.0;
-        b = 0.0;
+        marker.color.r = 0.0f;
+        marker.color.g = 1.0f;
+        marker.color.b = 0.0f;
       }
       else
       {
-        r = 1.0;
-        g = 0.0;
-        b = 0.0;
+        marker.color.r = 1.0f;
+        marker.color.g = 0.0f;
+        marker.color.b = 0.0f;
       }
       marker.color.a = 0.4; // Don't forget to set the alpha!
-      marker.color.r = r;
-      marker.color.g = g;
-      marker.color.b = b;
+      std::cout << "Index " << i << " with state " << state << " at: " << w[0] << " " << w[1] << " " << w[2] << std::endl;
+
       ma.markers.push_back(marker);
     }
     pc_by_category_pub.publish(ma);
@@ -398,7 +396,8 @@ public:
       }
     }
 
-    ROS_ASSERT(cell_occupancy_state_.size() == num_voxels_);
+    std::cout<<"cell occ state size: "<<cell_occupancy_state_.size();
+    // ROS_ASSERT(cell_occupancy_state_.size() == num_voxels_);
     // appendAndIncludePointCloudProb(orig_observed_, Observation::OCCUPIED);
     // appendAndIncludePointCloudProb(orig_unobserved_, Observation::UNOBSERVED);
 
@@ -433,11 +432,6 @@ public:
     //     }
     //   }
     // }
-    setRemainderAsFree();
-  }
-
-  void setRemainderAsFree()
-  {
   }
 
   void saveInitialObjectPose()
@@ -1324,7 +1318,7 @@ public:
 
   int gridCoordToVoxelIndex(const Eigen::Vector3i &coord)
   {
-    return coord[2] * (nr_ * nc_) + coord[1] * nr_ + coord[0];
+    return coord[2] * (nr_ * nc_) + coord[0] * nc_ + coord[1];
   }
 
   Eigen::Vector4f gridCoordToWorldCoord(const Eigen::Vector3i &grid_coord)
