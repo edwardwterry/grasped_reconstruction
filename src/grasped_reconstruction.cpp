@@ -45,7 +45,7 @@ public:
   tf::TransformListener listener;
   tf::TransformBroadcaster broadcaster;
   std::unordered_map<std::string, tf::StampedTransform> eef_pose_keyframes;
-  tf::StampedTransform objorig_T_w_, origbb_T_w_;
+  tf::StampedTransform origobj_T_w_, origbb_T_w_;
   tf2_ros::StaticTransformBroadcaster static_broadcaster;
   int rMax, rMin, gMax, gMin, bMax, bMin;
   PointCloud combo_orig, orig_observed_, orig_unobserved_, combo_curr;
@@ -222,12 +222,24 @@ public:
       listener.waitForTransform("/world", object_frame_id_,
                                 now, ros::Duration(3.0));
       listener.lookupTransform("/world", object_frame_id_,
-                               now, objorig_T_w_);
+                               now, origobj_T_w_);
     }
     catch (tf::TransformException ex)
     {
       ROS_ERROR("%s", ex.what());
     }
+    geometry_msgs::TransformStamped static_transformStamped;
+    static_transformStamped.header.stamp = ros::Time::now();
+    static_transformStamped.header.frame_id = "world";
+    static_transformStamped.child_frame_id = "orig_obj";
+    static_transformStamped.transform.translation.x = origobj_T_w_.getOrigin().x();
+    static_transformStamped.transform.translation.y = origobj_T_w_.getOrigin().y();
+    static_transformStamped.transform.translation.z = origobj_T_w_.getOrigin().z();
+    static_transformStamped.transform.rotation.x = origobj_T_w_.getRotation()[0];
+    static_transformStamped.transform.rotation.y = origobj_T_w_.getRotation()[1];
+    static_transformStamped.transform.rotation.z = origobj_T_w_.getRotation()[2];
+    static_transformStamped.transform.rotation.w = origobj_T_w_.getRotation()[3];
+    static_broadcaster.sendTransform(static_transformStamped);
   }
 
   void saveInitialBoundingBox()
@@ -315,7 +327,7 @@ public:
     tf::Quaternion q(best_view.x(), best_view.y(), best_view.z(), best_view.w());
     tf::Transform t;
     t.setRotation(q);
-    tf::Transform n_T_w(t * objorig_T_w_);
+    tf::Transform n_T_w(t * origobj_T_w_);
 
     publishEntropyArrowSphere(best_view_entropies);
 
@@ -432,11 +444,10 @@ public:
     cropHullFilter.setHullIndices(hullPolygons);
     cropHullFilter.setHullCloud(hullPoints);
     cropHullFilter.setDim(3); // if you uncomment this, it will work
-    cropHullFilter.setCropOutside(false);
+    cropHullFilter.setCropOutside(true);
 
     // create point cloud
     boost::shared_ptr<PointCloud> pc(new PointCloud());
-
 
     // a point inside the hull
     for (size_t i = 0; i < num_voxels_; ++i)
@@ -445,10 +456,7 @@ public:
       pc->push_back(pcl::PointXYZ(w[0], w[1], w[2]));
       // std::cout << w.matrix() << std::endl;
     }
-    pc->header.frame_id = "world";
-    // for (size_t i = 0; i < pc->size(); ++i)
-    // {
-    // }
+    // pc->header.frame_id = "world";
 
     //filter points
     cropHullFilter.setInputCloud(pc);
@@ -456,7 +464,7 @@ public:
     cropHullFilter.filter(*filtered);
     std::cout << "Proportion occluded by fingers: " << float(filtered->size()) / float(num_voxels_) << std::endl;
     pcl::PCLPointCloud2 cloud_filtered2;
-    pcl::toPCLPointCloud2(*pc, cloud_filtered2);
+    pcl::toPCLPointCloud2(*filtered, cloud_filtered2);
     sensor_msgs::PointCloud2Ptr output(new sensor_msgs::PointCloud2());
     pcl_conversions::fromPCL(cloud_filtered2, *output);
     output->header.frame_id = "world";
@@ -1175,9 +1183,9 @@ public:
     // while ((ijk[0] < nr_ + 1) && (ijk[0] >= 0) && // ?????
     //        (ijk[1] < nc_ + 1) && (ijk[1] >= 0) &&
     //        (ijk[2] < nl_ + 1) && (ijk[2] >= 0))
-    while ((ijk[0] < nr_ ) && (ijk[0] >= 0) && // ?????
-           (ijk[1] < nc_ ) && (ijk[1] >= 0) &&
-           (ijk[2] < nl_ ) && (ijk[2] >= 0))
+    while ((ijk[0] < nr_) && (ijk[0] >= 0) && // ?????
+           (ijk[1] < nc_) && (ijk[1] >= 0) &&
+           (ijk[2] < nl_) && (ijk[2] >= 0))
     {
       // add voxel to ray
       out_ray.push_back(ijk);
@@ -1285,9 +1293,9 @@ public:
       for (float el = el_min; el < el_max; el += el_incr)
       {
         Eigen::Vector4f v;
-        v[0] = VIEW_RADIUS * cos(az) * cos(el) + objorig_T_w_.getOrigin().getX();
-        v[1] = VIEW_RADIUS * sin(az) * cos(el) + objorig_T_w_.getOrigin().getY();
-        v[2] = VIEW_RADIUS * sin(el) + objorig_T_w_.getOrigin().getZ();
+        v[0] = VIEW_RADIUS * cos(az) * cos(el) + origobj_T_w_.getOrigin().getX();
+        v[1] = VIEW_RADIUS * sin(az) * cos(el) + origobj_T_w_.getOrigin().getY();
+        v[2] = VIEW_RADIUS * sin(el) + origobj_T_w_.getOrigin().getZ();
         v[3] = 0.0f;
         nbv_origins_.push_back(v);
         // calculate quaternion from view to origin
