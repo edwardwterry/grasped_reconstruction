@@ -203,7 +203,7 @@ public:
   void setRemainderAsFree()
   {
     float prob = probability_by_state_.find(VoxelState::FREE)->second;
-    for (int i = 0; i < (nr_ + 1) * (nc_ + 1) * (nl_ + 1); i++)
+    for (int i = 0; i < num_voxels_; i++)
     {
       auto it = cell_occupancy_prob_.find(i);
       if (it == cell_occupancy_prob_.end())
@@ -949,7 +949,8 @@ public:
     leaf_size_[2] = (orig_bb_max_.z - orig_bb_min_.z) / nl_;
     std::cout << "Divided bounding box into voxels!" << std::endl;
     std::cout << "nr_: " << nr_ << " nc_: " << nc_ << " nl_: " << nl_ << std::endl;
-    num_voxels_ = (nr_ + 1) * (nc_ + 1) * (nl_ + 1);
+    std::cout << "ls0: " << leaf_size_[0] << " ls1: " << leaf_size_[1] << " ls2: " << leaf_size_[2] << std::endl;
+    num_voxels_ = nr_ * nc_ * nl_; // (nr_ + 1) * (nc_ + 1) * (nl_ + 1);
   }
 
   void appendAndIncludePointCloudProb(const PointCloud &new_cloud, const int state)
@@ -1080,7 +1081,7 @@ public:
     r = floor(temp / nc_);
     Eigen::Vector3i v;
     v << r, c, l;
-    std::cout<<"index: "<<index<<" r: "<<r<<" c: "<<c<<" l: "<<l<<std::endl;
+    // std::cout<<"index: "<<index<<" r: "<<r<<" c: "<<c<<" l: "<<l<<std::endl;
     return v;
   }
 
@@ -1096,7 +1097,7 @@ public:
     v[1] = (grid_coord(1) + 0.5f) * leaf_size_[1] + origbb_T_w_.getOrigin().getY();
     v[2] = (grid_coord(2) + 0.5f) * leaf_size_[2] + origbb_T_w_.getOrigin().getZ();
     v[3] = 0.0f;
-    std::cout << "grid coord: " << grid_coord(0) <<" "<<grid_coord(1)<<" "<<grid_coord(2)<< " world coord:" << v(0) <<" "<<v(1)<<" "<<v(2) << std::endl;
+    // std::cout << "grid coord: " << grid_coord(0) <<" "<<grid_coord(1)<<" "<<grid_coord(2)<< " world coord:" << v(0) <<" "<<v(1)<<" "<<v(2) << std::endl;
     return v;
   }
 
@@ -1171,9 +1172,12 @@ public:
     float t_delta_y = leaf_size_[1] / static_cast<float>(fabs(direction[1]));
     float t_delta_z = leaf_size_[2] / static_cast<float>(fabs(direction[2]));
 
-    while ((ijk[0] < nr_ + 1) && (ijk[0] >= 0) &&
-           (ijk[1] < nc_ + 1) && (ijk[1] >= 0) &&
-           (ijk[2] < nl_ + 1) && (ijk[2] >= 0))
+    // while ((ijk[0] < nr_ + 1) && (ijk[0] >= 0) && // ?????
+    //        (ijk[1] < nc_ + 1) && (ijk[1] >= 0) &&
+    //        (ijk[2] < nl_ + 1) && (ijk[2] >= 0))
+    while ((ijk[0] < nr_ ) && (ijk[0] >= 0) && // ?????
+           (ijk[1] < nc_ ) && (ijk[1] >= 0) &&
+           (ijk[2] < nl_ ) && (ijk[2] >= 0))
     {
       // add voxel to ray
       out_ray.push_back(ijk);
