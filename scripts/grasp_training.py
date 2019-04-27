@@ -24,7 +24,7 @@ from moveit_msgs.msg import Grasp
 from moveit_msgs.msg import MotionPlanRequest, Constraints, JointConstraint, RobotTrajectory
 from control_msgs.msg import FollowJointTrajectoryAction, FollowJointTrajectoryGoal
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Header, String
+from std_msgs.msg import Header, String, Bool
 from grasped_reconstruction.srv import *
 from grasp_execution_msgs.msg import GraspControlAction, GraspControlGoal, GraspAction, GraspGoal, GraspData
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
@@ -78,7 +78,7 @@ class GraspDataCollection:
         self.joint_states = self.get_joint_states()
         self.object_height = 0.0  # [m]
         self.object_position = [0.2, 0.0, 0.76] # change if new object!!!
-        self.offset_by_phase = {'pre': 0.1, 'grasp': 0.0}  # pre was 0.12
+        self.offset_by_phase = {'pre': 0.1, 'grasp': 0.0, 'nbv_eval': 0.0}  # pre was 0.12
         self.phase = 'pre'
         self.finger_joint_angles_grasp = 0.5
         self.finger_joint_angles_ungrasp = 0.1
@@ -137,10 +137,20 @@ class GraspDataCollection:
         try:
             calculate_nbv = rospy.ServiceProxy('calculate_nbv', CalculateNbv)
             eef_poses = PoseArray()
-            p = self.generate_grasp_pose('grasp')
-            eef_poses.poses.append(p.pose)
+            # p = self.generate_grasp_pose('nbv_eval')
+            for _ in range(1):
+                eef_poses.poses.append(self.generate_grasp_pose('nbv_eval').pose)
             res = calculate_nbv(eef_poses)
             self.nbv_tf = res.nbv
+            print self.nbv_tf
+            grasp_pose = res.eef_pose.pose
+            dummy = Transform()
+            dummy.rotation.x = -0.5
+            dummy.rotation.y = 0.5
+            dummy.rotation.z = 0.5
+            dummy.rotation.w = -0.5
+            self.nbv_tf = dummy
+            
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
 
@@ -239,6 +249,9 @@ class GraspDataCollection:
         E_T_W_t = tf.transformations.translation_from_matrix(E_T_W_m)
         # E_T_W_r = tf.transformations.quaternion_from_matrix([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]])
         E_T_W_r = tf.transformations.quaternion_from_matrix(E_T_W_m)
+        print E_T_W_t, E_T_W_r
+
+        self.tf_broadcaster.sendTransform(E_T_W_t, E_T_W_r, rospy.Time.now(), 'pres_eef', 'world')
 
         print 'E_T_W_m\n', E_T_W_m
 
@@ -367,8 +380,8 @@ class GraspDataCollection:
             ik.attempts = 2
             # print '\nIK message:', ik
             res = req(ik)
-            outcome = res.error_code
-            # print res
+            outcome = res.error_code.val
+            print res
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
         js = {}
@@ -413,6 +426,9 @@ class GraspDataCollection:
         if phase == 'pre':
             th = 0.0  # np.random.uniform(0.0, math.pi * 2.0)
             self.grasp_theta = th
+        elif phase == 'nbv_eval':
+            th = np.random.uniform(0.0, math.pi * 2.0)
+            print 'theta of grasp candidate: ', th
         # https://www.programcreek.com/python/example/70252/geometry_msgs.msg.PoseStamped
         ps = PoseStamped()
         ps.header.frame_id = "/" + self.reference_frame
@@ -663,6 +679,17 @@ class GraspDataCollection:
         # outfile = TemporaryFile()
         np.savez('output', height_map=height_map, height=height)
 
+    def capture_and_process_observation(self):
+        try:
+            req = rospy.ServiceProxy(
+                '/capture_and_process_observation', CaptureAndProcessObservation)
+            msg = Bool()
+            msg.data = True
+            res = req(msg)
+            print res
+        except rospy.ServiceException, e:
+            print "Service call failed: %s" % e
+
 
 def main(args):
     rospy.init_node('grasp_data_collection')
@@ -693,6 +720,7 @@ def main(args):
                 gdc.move_to_state(js)
                 break
         gdc.save_current_eef_pose('present')
+        gdc.capture_and_process_observation()
         raw_input("press any key to move back")
         rospy.sleep(2)
         gdc.move_to_state(gdc.joint_states_at_pre)

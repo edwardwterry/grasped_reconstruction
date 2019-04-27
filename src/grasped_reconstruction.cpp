@@ -67,6 +67,8 @@ public:
   std::vector<Eigen::Vector4f> nbv_origins_;
   std::vector<Eigen::Quaternionf> nbv_orientations_;
   sensor_msgs::PointCloud2Ptr anytime_pc_; //(new sensor_msgs::PointCloud2);
+  PointCloud bb_voxel_cloud_;
+  float BB_SURFACE_MARGIN = 0.005; // [m]
 
   enum VoxelState
   {
@@ -117,7 +119,7 @@ public:
     // apply filter
     condrem.filter(*cloud);
 
-    if (eef_pose_keyframes.find("present") != eef_pose_keyframes.end() && eef_pose_keyframes.find("grasp") != eef_pose_keyframes.end())
+    /*if (eef_pose_keyframes.find("present") != eef_pose_keyframes.end() && eef_pose_keyframes.find("grasp") != eef_pose_keyframes.end())
     {
       {
         sensor_msgs::PointCloud2Ptr output(new sensor_msgs::PointCloud2());
@@ -156,7 +158,71 @@ public:
         output->header.frame_id = "world";
         anytime_pub.publish(*output);
       }
+    }*/
+
+    if (eef_pose_keyframes.find("present") != eef_pose_keyframes.end() && eef_pose_keyframes.find("grasp") != eef_pose_keyframes.end())
+    {
+      {
+        sensor_msgs::PointCloud2Ptr output(new sensor_msgs::PointCloud2());
+        Eigen::Matrix4f p_T_w, g_T_w, w_T_p, w_T_g;
+        pcl_ros::transformAsMatrix(eef_pose_keyframes.find("present")->second, p_T_w);
+        pcl_ros::transformAsMatrix(eef_pose_keyframes.find("grasp")->second, g_T_w);
+        std::cout << "\n p_T_w:\n"
+                  << (p_T_w).matrix() << std::endl;
+        std::cout << "\n g_T_w:\n"
+                  << (g_T_w).matrix() << std::endl;
+        w_T_g = Eigen::Matrix4f::Identity();
+        w_T_g.block(0, 0, 3, 3) = g_T_w.block(0, 0, 3, 3).transpose();
+        w_T_g.block(0, 3, 3, 1) = -g_T_w.block(0, 0, 3, 3).transpose() * g_T_w.block(0, 3, 3, 1);
+        w_T_p = Eigen::Matrix4f::Identity();
+        w_T_p.block(0, 0, 3, 3) = p_T_w.block(0, 0, 3, 3).transpose();
+        w_T_p.block(0, 3, 3, 1) = -p_T_w.block(0, 0, 3, 3).transpose() * p_T_w.block(0, 3, 3, 1);
+        std::cout << "\n w_T_g:\n"
+                  << (w_T_g).matrix() << std::endl;
+        std::cout << "\n homog matrix:\n"
+                  << (w_T_g * p_T_w).matrix() << std::endl;
+        PointCloud bb_voxel_cloud_at_present = bb_voxel_cloud_;
+        /*for (auto it = bb_voxel_cloud_at_present.begin(); it != bb_voxel_cloud_at_present.end(); ++it) // build list of voxels to have rays cast into them
+        {
+          Eigen::Matrix4f pt, tx;
+          pt = Eigen::Matrix4f::Identity();
+          tx = Eigen::Matrix4f::Identity();
+          pt(0, 3) = it->x;
+          pt(1, 3) = it->y;
+          pt(2, 3) = it->z;
+          tx = (p_T_w * w_T_g) * pt;
+          it->x = tx(0, 3);
+          it->y = tx(1, 3);
+          it->z = tx(2, 3);
+        }*/
+        // work out which boxes the observed points lie in
+        std::set<int> voxel_ids_corresponding_to_observed_points;
+        for (const auto &pt : *cloud)
+        {
+          Eigen::Vector4f p_present;
+          p_present << pt.x, pt.y, pt.z, 1.0f;
+          // what is its orig box coordinate
+          Eigen::Vector4f p_orig = (g_T_w * w_T_p) * p_present;
+          // what is the voxel id corresponding to this point
+          if (isPointInOrigBoundingBox(p_orig))
+          {
+            int index = worldCoordToVoxelIndex(p_orig);
+            voxel_ids_corresponding_to_observed_points.insert(index);
+            std::cout << "orig bb point observed: " << p_orig[0] << " " << p_orig[1] << " " << p_orig[2] << " id: " << index << std::endl;
+          }
+        }
+      }
     }
+  }
+
+  bool isPointInOrigBoundingBox(const Eigen::Vector4f &p)
+  {
+    bool in_box = false;
+    if (p(0) > orig_bb_min_.x && p(0) < orig_bb_max_.x && p(1) > orig_bb_min_.y && p(1) < orig_bb_max_.y && p(2) > orig_bb_min_.z && p(2) < orig_bb_max_.z)
+    {
+      in_box = true;
+    }
+    return in_box;
   }
 
   void getParams()
@@ -278,13 +344,13 @@ public:
     pcl::getMinMax3D(*cl, orig_bb_unobs_min, orig_bb_unobs_max);
     std::cout << "unobs min/max: " << orig_bb_unobs_min << " " << orig_bb_unobs_max << std::endl;
 
-    orig_bb_min_.x = std::min(orig_bb_unobs_min.x, orig_bb_obs_min.x);
-    orig_bb_min_.y = std::min(orig_bb_unobs_min.y, orig_bb_obs_min.y);
-    orig_bb_min_.z = std::min(orig_bb_unobs_min.z, orig_bb_obs_min.z);
+    orig_bb_min_.x = std::min(orig_bb_unobs_min.x, orig_bb_obs_min.x) - BB_SURFACE_MARGIN;
+    orig_bb_min_.y = std::min(orig_bb_unobs_min.y, orig_bb_obs_min.y) - BB_SURFACE_MARGIN;
+    orig_bb_min_.z = std::min(orig_bb_unobs_min.z, orig_bb_obs_min.z) - BB_SURFACE_MARGIN;
 
-    orig_bb_max_.x = std::max(orig_bb_unobs_max.x, orig_bb_obs_max.x);
-    orig_bb_max_.y = std::max(orig_bb_unobs_max.y, orig_bb_obs_max.y);
-    orig_bb_max_.z = std::max(orig_bb_unobs_max.z, orig_bb_obs_max.z);
+    orig_bb_max_.x = std::max(orig_bb_unobs_max.x, orig_bb_obs_max.x) + BB_SURFACE_MARGIN;
+    orig_bb_max_.y = std::max(orig_bb_unobs_max.y, orig_bb_obs_max.y) + BB_SURFACE_MARGIN;
+    orig_bb_max_.z = std::max(orig_bb_unobs_max.z, orig_bb_obs_max.z) + BB_SURFACE_MARGIN;
 
     std::cout << "Bounding box min: " << orig_bb_min_.x << " " << orig_bb_min_.y << " " << orig_bb_min_.z << std::endl;
     std::cout << "Bounding box max: " << orig_bb_max_.x << " " << orig_bb_max_.y << " " << orig_bb_max_.z << std::endl;
@@ -292,6 +358,13 @@ public:
     publishBoundingBoxMarker();
     divideBoundingBoxIntoVoxels();
     setVoxelProbabilities();
+
+    for (size_t i = 0; i < num_voxels_; ++i)
+    {
+      Eigen::Vector4f w = voxelIndexToWorldCoord(i);
+      bb_voxel_cloud_.push_back(pcl::PointXYZ(w[0], w[1], w[2]));
+    }
+
     vg_initialized_ = true;
   }
 
