@@ -1,3 +1,14 @@
 <launch>
-  <node name="grasped_reconstruction" pkg="grasped_reconstruction" type="grasped_reconstruction" output="screen"/>
+  <node name="grasped_reconstruction" pkg="grasped_reconstruction" type="grasped_reconstruction" output="screen">
+
+  </node>
+       <rosparam>
+       rMin: -100 <!-- -360 to 0 worked/-->
+       rMax: -90
+       <!-- gMin: 0
+       gMax: 255
+       bMin: 0
+       bMax: 255 -->
+       object_frame_id: "/cube1"
+      </rosparam>
 </launch>

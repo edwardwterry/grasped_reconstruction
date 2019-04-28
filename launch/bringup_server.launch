@@ -1,0 +1,11 @@
+<launch>
+  <include file="$(find octomap_server)/launch/octomap_mapping.launch">
+    <arg name="pc_topic" value="/camera/depth/points"/>
+  </include>
+  <include file="$(find octomap_server)/launch/octomap_mapping.launch">
+    <arg name="pc_topic" value="/octomap_unobs"/>
+    <arg name="node_name" value="octomap_server_unobs"/>
+    <arg name="cloud_out" value="octomap_full_unobs"/>
+    <arg name="pc_centers_topic" value="octomap_point_cloud_centers_unobs"/>
+  </include>
+  </launch>

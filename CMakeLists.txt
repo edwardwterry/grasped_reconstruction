@@ -3,10 +3,12 @@ project(grasped_reconstruction)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++11)
+set(OpenCV_DIR /usr/local/share/OpenCV/)
+set(PCL_ROS_INCLUDE_DIRS /home/et/deps_ws/src/perception_pcl/pcl_ros/include)
 
 # https://stackoverflow.com/questions/37441189/locations-pclconfig-cmake-and-pcl-config-cmake-files-for-pcl-library
 set(PCL_DIR "/usr/lib/x86_64-linux-gnu/cmake/pcl/")
-
+set(octomap_DIR "/opt/ros/kinetic/share/octomap/")
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
@@ -14,12 +16,23 @@ find_package(catkin REQUIRED
     octomap REQUIRED
     gazebo_ros
     gazebo_msgs
+    geometry_msgs
+    grid_map_core
+    grid_map_ros
+    grid_map_msgs
     std_msgs
     pcl_ros
+    visualization_msgs
     octomap_ros REQUIRED
     octomap_msgs REQUIRED
-    Eigen3 REQUIRED
-    PCL REQUIRED)
+    #PCL REQUIRED)
+    OpenCV REQUIRED
+    image_transport
+    grasp_execution_msgs
+    tf2_ros
+    tf2
+    )
+find_package (PCL REQUIRED COMPONENTS)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
@@ -62,11 +75,12 @@ find_package(gazebo REQUIRED)
 # )
 
 ## Generate services in the 'srv' folder
-# add_service_files(
-#   FILES
-#   Service1.srv
+add_service_files(
+  FILES
+  CalculateNbv.srv
+  CaptureAndProcessObservation.srv
 #   Service2.srv
-# )
+)
 
 ## Generate actions in the 'action' folder
 # add_action_files(
@@ -76,11 +90,12 @@ find_package(gazebo REQUIRED)
 # )
 
 ## Generate added messages and services with any dependencies listed here
-# generate_messages(
-#   DEPENDENCIES
+generate_messages(
+  DEPENDENCIES
  #  std_msgs  # Or other packages containing msgs
 #   gazebo_msgs
-# )
+  geometry_msgs
+)
 
 ################################################
 ## Declare ROS dynamic reconfigure parameters ##
@@ -114,6 +129,16 @@ find_package(gazebo REQUIRED)
 catkin_package(
   DEPENDS 
     gazebo_ros
+    PCL
+    pcl_ros
+    grid_map_core
+    grid_map_ros
+    grid_map_msgs
+    cv_bridge
+    grasp_execution_msgs
+    tf2_geometry_msgs
+    tf2_ros
+    tf2
 )
 
 ###########
@@ -129,7 +154,7 @@ include_directories(
  ${GAZEBO_INCLUDE_DIRS}
  ${PCL_INCLUDE_DIRS}
  ${octomap_INCLUDE_DIRS}
- ${Eigen3_INCLUDE_DIRS}
+ ${PCL_ROS_INCLUDE_DIRS}
 )
 add_definitions(${PCL_DEFINITIONS})
 ## Declare a C++ library
@@ -162,6 +187,8 @@ target_link_libraries(${PROJECT_NAME}
   ${catkin_LIBRARIES}
   ${GAZEBO_LIBRARIES}
   ${PCL_LIBRARIES}
+  ${OpenCV_LIBS}
+  ${PCL_ROS_INCLUDE_DIRS}
 )
 
 #############
