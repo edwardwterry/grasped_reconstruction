@@ -53,6 +53,7 @@ class GraspSelection:
                 cv_image = self.bridge.imgmsg_to_cv2(msg, "mono8")
             except CvBridgeError as e:
                 print(e)
+            cv2.imshow('image', cv_image)
             norm_image = cv2.normalize(
                 cv_image, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
             self.selectGrasp(norm_image)
@@ -109,6 +110,7 @@ class GraspSelection:
         match = 0.0001  # hack BEWARE!
         best_angle = None
         best_square = None
+        cv2.waitKey(0)
         for angle in angles:
             # Rotate height map image by angle
             rot = cv2.getRotationMatrix2D((rows/2, cols/2), angle, 1)
@@ -138,7 +140,6 @@ class GraspSelection:
     #     if self.model is None:
     #         self.loadModel()
     #     else:
-            
 
     def getExampleWeights(self):
         return [0.1, 0.9, 0.1, 0.1, 0.9, 0.1, 0.1, 0.9, 0.1]

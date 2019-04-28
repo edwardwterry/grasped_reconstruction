@@ -13,6 +13,7 @@ public:
     calc_unobserved_points_sub = nh_.subscribe("/camera/depth/points", 1, &GraspedReconstruction::calculateUnobservedPointsClbk, this);
     pc_anytime_sub = nh_.subscribe("/camera/depth/points", 1, &GraspedReconstruction::pcAnytimeClbk, this);
     gm_sub = nh_.subscribe("/elevation_mapping/elevation_map", 1, &GraspedReconstruction::gmClbk, this);
+    tabletop_sub = nh_.subscribe("/camera/depth/points", 1, &GraspedReconstruction::tabletopClbk, this);
     // color_sub = nh_.subscribe("/camera/depth/points", 1,
     // &GraspedReconstruction::colorClbk, this);
     save_eef_pose_sub = nh_.subscribe("/save_current_eef_pose", 1, &GraspedReconstruction::saveCurrentEefPoseClbk, this);
@@ -41,7 +42,7 @@ public:
   }
 
   ros::NodeHandle nh_;
-  ros::Subscriber calc_observed_points_sub, gm_sub, calc_unobserved_points_sub, save_eef_pose_sub, pc_anytime_sub, color_sub;
+  ros::Subscriber calc_observed_points_sub, gm_sub, calc_unobserved_points_sub, save_eef_pose_sub, pc_anytime_sub, color_sub, tabletop_sub;
   ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub, entropy_arrow_pub, nbv_pub, anytime_pub, ch_points_pub, ch_pub, pc_by_category_pub;
   ros::ServiceServer calculate_nbv_service_, capture_and_process_observation_service_;
   image_transport::Publisher hm_im_pub;
@@ -360,7 +361,7 @@ public:
       int index = worldCoordToVoxelIndex(p_orig);
       if (map.find(index) == map.end())
       {
-        map.insert(index);                                // if not seen before
+        map.insert(index); // if not seen before
         // std::cout << "Add index: " << index << std::endl; // << " " << p_orig[1] << " " << p_orig[2] << " id: " << index << std::endl;
       }
       else
@@ -958,6 +959,47 @@ public:
     // }
   }
 
+  void tabletopClbk(const sensor_msgs::PointCloud2ConstPtr &msg)
+  {
+    std::cout << "Preparing tabletop!" << std::endl;
+    // http://wiki.ros.org/pcl/Tutorials#pcl.2BAC8-Tutorials.2BAC8-hydro.sensor_msgs.2BAC8-PointCloud2
+    // Convert the sensor_msgs/PointCloud2 data to pcl/PointCloud
+    sensor_msgs::PointCloud2Ptr msg_transformed(new sensor_msgs::PointCloud2());
+    std::string target_frame("world");
+    pcl_ros::transformPointCloud(target_frame, *msg, *msg_transformed, listener);
+    PointCloud::Ptr cloud(new PointCloud());
+    pcl::fromROSMsg(*msg_transformed, *cloud);
+
+    // remove the ground plane
+    // http://pointclouds.org/documentation/tutorials/passthrough.php
+    pcl::PassThrough<pcl::PointXYZ> pass;
+    pass.setInputCloud(cloud);
+    pass.setFilterFieldName("z");
+    pass.setFilterLimits(-0.5, 0.5);
+    pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
+    pass.filter(*cloud);
+
+    pass.setFilterFieldName("x");
+    pass.setFilterLimits(0, 0.4);
+    pass.setFilterLimitsNegative(false); // allow to pass what is inside of this range
+    pass.filter(*cloud);
+
+    pass.setFilterFieldName("y");
+    pass.setFilterLimits(-0.4, 0.2);
+    pass.setFilterLimitsNegative(false); // allow to pass what is inside of this range
+    pass.filter(*cloud);
+
+    // Downsample this pc
+    pcl::VoxelGrid<pcl::PointXYZ> downsample;
+    downsample.setInputCloud(cloud);
+    downsample.setLeafSize(LEAF_SIZE, LEAF_SIZE, LEAF_SIZE);
+    downsample.filter(*cloud);
+
+    sensor_msgs::PointCloud2 cloud_cropped_with_partial_tabletop;
+    pcl::toROSMsg(*cloud, cloud_cropped_with_partial_tabletop);
+    tabletop_pub.publish(cloud_cropped_with_partial_tabletop); // publish the object and a bit of the tabletop to assist height map
+  }
+
   void calculateObservedPointsClbk(const sensor_msgs::PointCloud2ConstPtr &msg)
   {
     if (!orig_observed_set_)
@@ -1000,7 +1042,7 @@ public:
 
         sensor_msgs::PointCloud2 cloud_cropped_with_partial_tabletop;
         pcl::toROSMsg(*cloud, cloud_cropped_with_partial_tabletop);
-        tabletop_pub.publish(cloud_cropped_with_partial_tabletop); // publish the object and a bit of the tabletop to assist height map
+        // tabletop_pub.publish(cloud_cropped_with_partial_tabletop); // publish the object and a bit of the tabletop to assist height map
         std::cout << "Published cloud cropped with partial tabletop" << std::endl;
 
         pass.setInputCloud(cloud);
