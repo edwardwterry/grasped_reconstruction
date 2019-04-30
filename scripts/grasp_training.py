@@ -123,6 +123,10 @@ class GraspDataCollection:
         self.hm_image = None
         self.nr = 0
         self.nc = 0
+        self.basic_offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 0),
+                   (0, 1), (1, -1), (1, 0), (1, 1)]
+        self.scaled_offsets = self.basic_offsets
+        self.stride = 0
 
         print 'Initialization complete'
 
@@ -783,6 +787,8 @@ class GraspDataCollection:
 
         # self.hm_image = cv2.normalize(
         #     cv_image, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        self.stride = int(self.sample_point_spacing / self.gm_res)
+        self.scaled_offsets = [x * (self.stride - 1) for x in self.basic_offsets]
         self.gm_received = True
         print "gm received!"
 
@@ -796,24 +802,23 @@ class GraspDataCollection:
         nz = cv.findNonZero(self.hm_mask_image)
 
     def generateSampleGrids(self):
-        stride = int(self.sample_point_spacing / self.gm_res)
         midpoints = []
-        for r in range(stride - 1, self.nr - stride + 1):
-            for c in range(stride - 1, self.nc - stride + 1):
+        for r in range(self.stride - 1, self.nr - self.stride + 1):
+            for c in range(self.stride - 1, self.nc - self.stride + 1):
                 midpoints.append((r, c))
         print 'midpoints', midpoints
-        return self.generateGridsAroundMidpoints(midpoints, stride)
+        return self.generateGridsAroundMidpoints(midpoints)
 
-    def generateGridsAroundMidpoints(self, midpoints, stride):
+    def generateGridsAroundMidpoints(self, midpoints):
         # row-major
         grids = []
         offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 0),
                    (0, 1), (1, -1), (1, 0), (1, 1)]
         for pt in midpoints:
             one_square = []
-            for offset in offsets:
-                one_square.append([(pt[0] + (stride - 1) * offset[0]),
-                                   (pt[1] + (stride - 1) * offset[1])])
+            for offset in self.scaled_offsets:
+                one_square.append([(pt[0] + offset[0]),
+                                   (pt[1] + offset[1])])
             grids.append(one_square)
         return grids
 
@@ -851,7 +856,7 @@ class GraspDataCollection:
         image_tr = cv2.warpAffine(
             im, Mt, im.shape[::-1], borderMode=cv2.BORDER_CONSTANT, borderValue=0)
         image_rot = imutils.rotate(image_tr, -angle*180/math.pi) #+/- angle TODO
-        print image_rot
+        # print image_rot
         return image_rot
 
     def get_height_map_values_at_grid_and_angle(self, grid, angle):
@@ -861,11 +866,11 @@ class GraspDataCollection:
         mp = self.get_grid_midpoint(grid)
         hm_transformed_to_desired_eef_pose = self.rotate_hm_by_angle_about_point(mp[0], mp[1], angle)
         # print hm_transformed_to_desired_eef_pose
-        print mp, angle
-        for pt in grid:
-            vals.append(hm_transformed_to_desired_eef_pose[pt[0], pt[1]])
-        # print vals
+        # print mp, angle
+        for offset in self.scaled_offsets:
+            vals.append(hm_transformed_to_desired_eef_pose[offset[0] + self.nr/2, offset[1] + self.nc/2]) # TODO r/c?
         vals = np.reshape(vals, [side_length, side_length])
+        # print vals
         return vals
 
     def generate_grasp_pose_candidates(self, grids, angles):
