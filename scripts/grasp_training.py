@@ -42,6 +42,7 @@ import actionlib
 import copy
 from tf import TransformListener, TransformBroadcaster
 import tf2_ros
+import imutils
 
 np.set_printoptions(formatter={'float': lambda x: "{0:0.3f}".format(x)})
 
@@ -89,7 +90,7 @@ class GraspDataCollection:
         self.arm_home_state = {}
         self.hm_sub = rospy.Subscriber("/height_map_image",
                                        Image, self.hm_clbk,  queue_size=1)
-        self.height_map = None  # TODO check for is None
+        self.hm_image = None  # TODO check for is None
         self.joint_states_ik_seed = self.generate_joint_states_ik_seed()
         self.joint_states_presentation_pose = self.generate_joint_states_presentation_pose()
         self.finger_pub = rospy.Publisher(
@@ -116,9 +117,12 @@ class GraspDataCollection:
         self.hm_scale_factor = 1.0
         self.sample_point_spacing = 0.03  # [m]
         self.gm_received = False
+        self.hm_received = False
         self.num_grasp_candidates_to_generate = 10
-        self.num_grasp_angles_to_try = 16
+        self.num_grasp_angles_to_try = 4
         self.hm_image = None
+        self.nr = 0
+        self.nc = 0
 
         print 'Initialization complete'
 
@@ -290,12 +294,15 @@ class GraspDataCollection:
 
     def hm_clbk(self, msg):
         try:
-            cv_image = self.bridge.imgmsg_to_cv2(msg, "mono8")
+            self.hm_image = self.bridge.imgmsg_to_cv2(msg, "mono8")
         except CvBridgeError as e:
             print(e)
         # TODO extract max and min of cv_image
-        self.height_map = cv2.normalize(
-            cv_image, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        # self.hm_image = cv2.normalize(
+        #     self.hm_image, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        
+        self.hm_received = True
+        print self.hm_image
 
     def save_arm_home_state(self):
         if self.verbose:
@@ -731,10 +738,10 @@ class GraspDataCollection:
         return r, c
 
     def index_to_local_coord(self, index):
-        return self.grid_coord_to_local_coord(index_to_grid_coord(index))
+        return self.grid_coord_to_local_coord(self.index_to_grid_coord(index))
 
     def local_coord_to_index(self, x, y):
-        return self.grid_coord_to_index(local_coord_to_grid_coord(x, y))
+        return self.grid_coord_to_index(self.local_coord_to_grid_coord(x, y))
 
     def local_coord_to_world_coord(self, x, y):
         return self.gm_ctr_x + x, self.gm_ctr_y + y
@@ -749,41 +756,57 @@ class GraspDataCollection:
         return y, x
 
     def grid_coord_to_world_coord(self, r, c):
-        return local_coord_to_world_coord(grid_coord_to_local_coord(r, c))
+        xl, yl = self.grid_coord_to_local_coord(r, c)
+        return self.local_coord_to_world_coord(xl, yl)
 
     def world_coord_to_image_coord(self, x, y):
-        return grid_coord_to_image_coord(local_coord_to_grid_coord(world_coord_to_local_coord(x, y)))
+        xl, yl = self.world_coord_to_local_coord(x, y)
+        r, c = self.local_coord_to_grid_coord(xl, yl)
+        return self.grid_coord_to_image_coord(r, c)
 
     def image_coord_to_world_coord(self, x, y):
-        return local_coord_to_world_coord(grid_coord_to_local_coord(image_coord_to_grid_coord(x, y)))
+        r, c = self.image_coord_to_grid_coord(x, y)
+        xl, yl = self.grid_coord_to_local_coord(r, c)
+        return self.local_coord_to_world_coord(xl, yl)
 
     def gm_clbk(self, msg):
         self.gm_res = msg.info.resolution
         self.gm_ctr_x = msg.info.pose.position.x
         self.gm_ctr_y = msg.info.pose.position.y
-        self.nr = msg.info.length_x / self.gm_res
-        self.nc = msg.info.length_y / self.gm_res
-        try:
-            self.hm_image = self.bridge.imgmsg_to_cv2(msg, "mono8")
-        except CvBridgeError as e:
-            print(e)
-        cv2.imshow('image', cv_image)
-        norm_image = cv2.normalize(
-            cv_image, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        # self.selectGrasp(norm_image)
-        self.gm_received = True
+        self.nr = int(msg.info.length_x / self.gm_res)
+        print self.nr
+        self.nc = int(msg.info.length_y / self.gm_res)
+        # try:
+        #     cv_image = self.bridge.imgmsg_to_cv2(msg, "mono8")
+        # except CvBridgeError as e:
+        #     print(e)
 
-    def generateSampleMidpoints(self, rows, cols):
+        # self.hm_image = cv2.normalize(
+        #     cv_image, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        self.gm_received = True
+        print "gm received!"
+
+    def gm_mask_clbk(self, msg):
+        try:
+            cv_image = self.bridge.imgmsg_to_cv2(msg, "mono8")
+        except CvBridgeError as e:
+            print(e)        
+        self.hm_mask_image = cv2.normalize(
+            cv_image, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        nz = cv.findNonZero(self.hm_mask_image)
+
+    def generateSampleGrids(self):
         stride = int(self.sample_point_spacing / self.gm_res)
         midpoints = []
-        for r in range(stride - 1, rows - stride + 1):
-            for c in range(stride - 1, cols - stride + 1):
+        for r in range(stride - 1, self.nr - stride + 1):
+            for c in range(stride - 1, self.nc - stride + 1):
                 midpoints.append((r, c))
-        return self.generateGridAroundMidpoints(midpoints, stride)
+        print 'midpoints', midpoints
+        return self.generateGridsAroundMidpoints(midpoints, stride)
 
     def generateGridsAroundMidpoints(self, midpoints, stride):
         # row-major
-        grids = {}
+        grids = []
         offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 0),
                    (0, 1), (1, -1), (1, 0), (1, 1)]
         for pt in midpoints:
@@ -791,46 +814,87 @@ class GraspDataCollection:
             for offset in offsets:
                 one_square.append([(pt[0] + (stride - 1) * offset[0]),
                                    (pt[1] + (stride - 1) * offset[1])])
-            grids.add(pt, one_square)
+            grids.append(one_square)
         return grids
 
-    def midpoint_and_angle_to_eef_pose(self, grid, angle):
-        midpoint = grid[len(grid)/2]
-        xw, yw = grid_coord_to_world_coord(midpoint[0], midpoint[1])
+    def grid_and_angle_to_eef_pose(self, grid, angle):
+        midpoint = self.get_grid_midpoint(grid)
+        xw, yw = self.grid_coord_to_world_coord(midpoint[0], midpoint[1])
         ps = PoseStamped()
+        quat = tf.transformations.quaternion_from_euler(
+            -math.pi, 0, -angle) # TBA +/-!!!
         ps.header.frame_id = self.reference_frame
         ps.pose.position.x = xw
         ps.pose.position.y = yw
+        ps.pose.position.z = 0.93 # TBA
+        ps.pose.orientation.x = quat[0]
+        ps.pose.orientation.y = quat[1]
+        ps.pose.orientation.z = quat[2]
+        ps.pose.orientation.w = quat[3]
+        return ps
 
-        # return how much the image should be shifted and rotated
+    def get_grid_midpoint(self, grid):
+        return grid[len(grid)/2]
 
+    def predict_grasp_success_probability(self, grid, angle):
+        # get the actual points to be sampled
+        hm_vals_at_grid = self.get_height_map_values_at_grid_and_angle(grid, angle)
+        # put these into the model
+        prob = np.sum(hm_vals_at_grid) # reshape(grid, grid.size()) # np.random.uniform()
+        return prob # TODO update
 
-    def predict_grasp_success_probability(self, grid):
-        pass
+    def rotate_hm_by_angle_about_point(self, x, y, angle):
+        # shift to a new center, which will become the center of rotation
+        # https://docs.opencv.org/3.0-beta/doc/py_tutorials/py_imgproc/py_geometric_transformations/py_geometric_transformations.html
+        im = self.hm_image
+        Mt = np.asarray([[1.0, 0.0,float(self.nr/2 - y)],[0.0,1.0,float(self.nc/2 - x)]])
+        image_tr = cv2.warpAffine(
+            im, Mt, im.shape[::-1], borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        image_rot = imutils.rotate(image_tr, -angle*180/math.pi) #+/- angle TODO
+        print image_rot
+        return image_rot
 
-    def get_height_map_values_at_grid(self, grid):
+    def get_height_map_values_at_grid_and_angle(self, grid, angle):
+        num_elements_in_grid = len(grid)
+        side_length = math.sqrt(num_elements_in_grid) # HACK!!!
         vals = []
+        mp = self.get_grid_midpoint(grid)
+        hm_transformed_to_desired_eef_pose = self.rotate_hm_by_angle_about_point(mp[0], mp[1], angle)
+        # print hm_transformed_to_desired_eef_pose
+        print mp, angle
         for pt in grid:
+            vals.append(hm_transformed_to_desired_eef_pose[pt[0], pt[1]])
+        # print vals
+        vals = np.reshape(vals, [side_length, side_length])
+        return vals
 
-    def generate_grasp_pose_candidates(self, grids):
+    def generate_grasp_pose_candidates(self, grids, angles):
         probs = []
         for grid in grids:
-            probs.append((self.predict_grasp_success_probability(grid), grid))
+            for angle in angles: 
+                print "midpoint: ", self.get_grid_midpoint(grid), " angle: ", angle
+                pose = self.grid_and_angle_to_eef_pose(grid, angle)
+                probs.append((self.predict_grasp_success_probability(grid, angle), pose))
         probs_descending = sorted(probs, reverse=True)
+        # print [x for x in probs_descending[:self.num_grasp_candidates_to_generate]]
         return [x[1] for x in probs_descending[:self.num_grasp_candidates_to_generate]]
 
-    def hmClbk(self, msg):
-        if self.grid_map_info is not None:
-
+    def generateSampleAngles(self):
+        return [x/float(self.num_grasp_angles_to_try) * math.pi * 2.0 for x in range(self.num_grasp_angles_to_try)]
 
 def main(args):
     rospy.init_node('grasp_data_collection')
     gdc = GraspDataCollection(args[1])
     gdc.save_arm_home_state()
 
-    while not gdc.gm_received:
-        pass
-    grids = gdc.generateSampleMidpoints()
+    while not gdc.gm_received or not gdc.hm_received:
+        print "waiting"
+        rospy.sleep(0.5)
+    grids = gdc.generateSampleGrids()
+    angles = gdc.generateSampleAngles()
+    grasp_candidates = gdc.generate_grasp_pose_candidates(grids, angles)
+
+    quit()
 
     # do the actual sequence
     while gdc.current_trial_no < gdc.total_num_trials:
