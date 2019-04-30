@@ -69,6 +69,7 @@ class GraspDataCollection:
         self.lens_link = 'lens_link'
         self.nbv = 'nbv'
         self.nbv_tf = Transform()
+        self.grasp_eef_pose_to_achieve_nbv = PoseStamped()
         self.joints_to_exclude = ['base_to_jaco_on_table', 'jaco_finger_joint_0',
                                   'jaco_finger_joint_2', 'jaco_finger_joint_4']
         self.joint_traj_action_topic = '/jaco/joint_trajectory_action'
@@ -112,13 +113,13 @@ class GraspDataCollection:
 
         # gm params
         self.gm_res = 0.01  # [m]
-        self.gm_ctr_x = 0.2  # [m]
-        self.gm_ctr_y = 0.0  # [m]
+        self.gm_ctr_x = self.object_position[0]  # [m]
+        self.gm_ctr_y = self.object_position[1]  # [m]
         self.hm_scale_factor = 1.0
-        self.sample_point_spacing = 0.04  # [m]
+        self.sample_point_spacing = 0.03  # [m]
         self.gm_received = False
         self.hm_received = False
-        self.num_grasp_candidates_to_generate = 10
+        self.num_grasp_candidates_to_generate = 5
         self.num_grasp_angles_to_try = 4
         self.hm_image = None
         self.nr = 0
@@ -156,24 +157,24 @@ class GraspDataCollection:
                 'jaco_arm_2_joint': -0.40208614052374525}
         return vals
 
-    def get_nbv_and_grasp_pose(self):
+    def get_nbv_and_grasp_pose(self, candidate_grasps):
         rospy.wait_for_service('calculate_nbv')
         try:
             calculate_nbv = rospy.ServiceProxy('calculate_nbv', CalculateNbv)
             eef_poses = PoseArray()
             # p = self.generate_grasp_pose('nbv_eval')
-            for _ in range(1):
-                eef_poses.poses.append(
-                    self.generate_grasp_pose('nbv_eval').pose)
+            for g in candidate_grasps:
+                eef_poses.poses.append(g.pose)
             res = calculate_nbv(eef_poses)
             self.nbv_tf = res.nbv
-            print self.nbv_tf
-            grasp_pose = res.eef_pose.pose
-            dummy = Transform()
-            dummy.rotation.x = -0.5
-            dummy.rotation.y = 0.5
-            dummy.rotation.z = 0.5
-            dummy.rotation.w = -0.5
+            self.grasp_eef_pose_to_achieve_nbv = res.eef_pose
+            print self.nbv_tf, self.grasp_eef_pose_to_achieve_nbv
+            # grasp_pose = res.eef_pose.pose
+            # dummy = Transform()
+            # dummy.rotation.x = -0.5
+            # dummy.rotation.y = 0.5
+            # dummy.rotation.z = 0.5
+            # dummy.rotation.w = -0.5
             # self.nbv_tf = dummy
 
         except rospy.ServiceException, e:
@@ -306,7 +307,7 @@ class GraspDataCollection:
         #     self.hm_image, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
         
         self.hm_received = True
-        print self.hm_image
+        # print self.hm_image
 
     def save_arm_home_state(self):
         if self.verbose:
@@ -405,11 +406,13 @@ class GraspDataCollection:
             ik.ik_link_name = self.palm_link
             ik.robot_state = rs
             if eef_pose is None:  # just for the grasp
-                ik.pose_stamped = self.generate_grasp_pose(phase)
+                ik.pose_stamped = self.grasp_eef_pose_to_achieve_nbv
             else:  # for the presentation pose
                 ik.pose_stamped = eef_pose
+            if not phase == 'present':
+                ik.pose_stamped.pose.position.z = self.get_object_height() + 0.18 + self.offset_by_phase[phase]  # 0.24 0.18good 0.4
             ik.timeout.secs = 3.0  # [s]
-            ik.attempts = 2
+            ik.attempts = 1
             # print '\nIK message:', ik
             res = req(ik)
             outcome = res.error_code.val
@@ -778,7 +781,7 @@ class GraspDataCollection:
         self.gm_ctr_x = msg.info.pose.position.x
         self.gm_ctr_y = msg.info.pose.position.y
         self.nr = int(msg.info.length_x / self.gm_res)
-        print self.nr
+        # print self.nr
         self.nc = int(msg.info.length_y / self.gm_res)
         # try:
         #     cv_image = self.bridge.imgmsg_to_cv2(msg, "mono8")
@@ -806,7 +809,7 @@ class GraspDataCollection:
         for r in range(self.stride - 1, self.nr - self.stride + 1):
             for c in range(self.stride - 1, self.nc - self.stride + 1):
                 midpoints.append((r, c))
-        print 'midpoints', midpoints
+        # print 'midpoints', midpoints
         return midpoints # self.generateGridsAroundMidpoints(midpoints)
 
     # def generateGridsAroundMidpoints(self, midpoints):
@@ -844,8 +847,21 @@ class GraspDataCollection:
         # get the actual points to be sampled
         hm_vals_at_midpoint = self.get_height_map_values_at_midpoint_and_angle(midpoint, angle)
         # put these into the model
-        prob = np.sum(hm_vals_at_midpoint) # reshape(grid, grid.size()) # np.random.uniform()
+        sum = self.convolveTemplateWithImage(self.getExampleWeights(), hm_vals_at_midpoint)
+        prob = sum # np.sum(hm_vals_at_midpoint) # reshape(grid, grid.size()) # np.random.uniform()
         return prob # TODO update
+
+    def getExampleWeights(self):
+        return [0.1, 0.9, 0.1, 0.1, 0.9, 0.1, 0.1, 0.9, 0.1]
+
+    def convolveTemplateWithImage(self, template, pixels):
+        sum = 0
+        pixels = np.divide(pixels, 255.0)
+        template = np.reshape(np.asarray(template),[3,3])
+        # print pixels, template
+        # for p, t in zip(pixels, template):
+        #     sum += [p[0], p[1]] * 
+        return np.sum(np.multiply(pixels, template))/ 9.0
 
     def transform_hm(self, x, y, angle):
         # shift to a new center, which will become the center of rotation
@@ -862,24 +878,24 @@ class GraspDataCollection:
         side_length = math.sqrt(num_elements_in_grid) # HACK!!!
         vals = []
         hm_transformed_to_desired_eef_pose = self.transform_hm(midpoint[0], midpoint[1], angle)
-        print hm_transformed_to_desired_eef_pose
-        print midpoint, angle
+        # print hm_transformed_to_desired_eef_pose
+        # print midpoint, angle
         for offset in self.scaled_offsets:
             vals.append(hm_transformed_to_desired_eef_pose[offset[0] + self.nr/2, offset[1] + self.nc/2]) # TODO r/c?
         vals = np.reshape(vals, [side_length, side_length])
-        print vals
+        # print vals
         return vals
 
     def generate_grasp_pose_candidates(self, midpoints, angles):
         probs = []
-        print 'scaled offets:', self.scaled_offsets
+        # print 'scaled offets:', self.scaled_offsets
         for midpoint in midpoints:
             for angle in angles: 
-                print "midpoint: ", midpoint, " angle: ", angle
+                # print "midpoint: ", midpoint, " angle: ", angle
                 pose = self.midpoint_and_angle_to_eef_pose(midpoint, angle)
                 probs.append((self.predict_grasp_success_probability(midpoint, angle), pose))
         probs_descending = sorted(probs, reverse=True)
-        # print [x for x in probs_descending[:self.num_grasp_candidates_to_generate]]
+        print [x for x in probs_descending[:self.num_grasp_candidates_to_generate]]
         return [x[1] for x in probs_descending[:self.num_grasp_candidates_to_generate]]
 
     def generateSampleAngles(self):
@@ -895,9 +911,9 @@ def main(args):
         rospy.sleep(0.5)
     midpoints = gdc.generateSampleMidpoints()
     angles = gdc.generateSampleAngles()
-    grasp_candidates = gdc.generate_grasp_pose_candidates(midpoints, angles)
-
-    quit()
+    candidate_grasps = gdc.generate_grasp_pose_candidates(midpoints, angles)
+    # print grasp_candidates
+    # quit()
 
     # do the actual sequence
     while gdc.current_trial_no < gdc.total_num_trials:
@@ -906,7 +922,7 @@ def main(args):
         # height_map = gdc.height_map  # TODO make not None
         # gdc.pickup()
         # gdc.execute_grasp_action('open')
-        gdc.get_nbv_and_grasp_pose()
+        gdc.get_nbv_and_grasp_pose(candidate_grasps)
         js_pre, _ = gdc.get_ik('pre')
         gdc.move_to_state(js_pre)
         gdc.save_joint_states_at_pre()
