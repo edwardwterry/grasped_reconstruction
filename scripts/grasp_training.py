@@ -115,7 +115,7 @@ class GraspDataCollection:
         self.gm_ctr_x = 0.2  # [m]
         self.gm_ctr_y = 0.0  # [m]
         self.hm_scale_factor = 1.0
-        self.sample_point_spacing = 0.03  # [m]
+        self.sample_point_spacing = 0.04  # [m]
         self.gm_received = False
         self.hm_received = False
         self.num_grasp_candidates_to_generate = 10
@@ -723,29 +723,29 @@ class GraspDataCollection:
             print "Service call failed: %s" % e
 
     # Hash functions
-    def index_to_grid_coord(self, index):
+    def index_to_pixel_coord(self, index):
         c = i % self.nc
         r = i / self.nc
         return r, c
 
-    def grid_coord_to_index(self, r, c):
+    def pixel_coord_to_index(self, r, c):
         return r * self.nc + c
 
-    def grid_coord_to_local_coord(self, r, c):
+    def pixel_coord_to_local_coord(self, r, c):
         xl = self.gm_res * (self.nc / 2 - (c + 0.5))
         yl = self.gm_res * (self.nr / 2 - (r + 0.5))
         return xl, yl
 
-    def local_coord_to_grid_coord(self, x, y):
+    def local_coord_to_pixel_coord(self, x, y):
         c = self.nc / 2 - x / self.gm_res - 0.5
         r = self.nr / 2 - y / self.gm_res - 0.5
         return r, c
 
     def index_to_local_coord(self, index):
-        return self.grid_coord_to_local_coord(self.index_to_grid_coord(index))
+        return self.pixel_coord_to_local_coord(self.index_to_pixel_coord(index))
 
     def local_coord_to_index(self, x, y):
-        return self.grid_coord_to_index(self.local_coord_to_grid_coord(x, y))
+        return self.pixel_coord_to_index(self.local_coord_to_pixel_coord(x, y))
 
     def local_coord_to_world_coord(self, x, y):
         return self.gm_ctr_x + x, self.gm_ctr_y + y
@@ -753,24 +753,24 @@ class GraspDataCollection:
     def world_coord_to_local_coord(self, x, y):
         return x - self.gm_ctr_x, y - self.gm_ctr_y
 
-    def grid_coord_to_image_coord(self, r, c):
+    def pixel_coord_to_image_coord(self, r, c):
         return c, r
 
-    def image_coord_to_grid_coord(self, x, y):
+    def image_coord_to_pixel_coord(self, x, y):
         return y, x
 
-    def grid_coord_to_world_coord(self, r, c):
-        xl, yl = self.grid_coord_to_local_coord(r, c)
+    def pixel_coord_to_world_coord(self, r, c):
+        xl, yl = self.pixel_coord_to_local_coord(r, c)
         return self.local_coord_to_world_coord(xl, yl)
 
     def world_coord_to_image_coord(self, x, y):
         xl, yl = self.world_coord_to_local_coord(x, y)
-        r, c = self.local_coord_to_grid_coord(xl, yl)
-        return self.grid_coord_to_image_coord(r, c)
+        r, c = self.local_coord_to_pixel_coord(xl, yl)
+        return self.pixel_coord_to_image_coord(r, c)
 
     def image_coord_to_world_coord(self, x, y):
-        r, c = self.image_coord_to_grid_coord(x, y)
-        xl, yl = self.grid_coord_to_local_coord(r, c)
+        r, c = self.image_coord_to_pixel_coord(x, y)
+        xl, yl = self.pixel_coord_to_local_coord(r, c)
         return self.local_coord_to_world_coord(xl, yl)
 
     def gm_clbk(self, msg):
@@ -788,7 +788,7 @@ class GraspDataCollection:
         # self.hm_image = cv2.normalize(
         #     cv_image, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
         self.stride = int(self.sample_point_spacing / self.gm_res)
-        self.scaled_offsets = [x * (self.stride - 1) for x in self.basic_offsets]
+        self.scaled_offsets = [(x[0] * (self.stride - 1), x[1] * (self.stride - 1)) for x in self.basic_offsets]
         self.gm_received = True
         print "gm received!"
 
@@ -801,30 +801,29 @@ class GraspDataCollection:
             cv_image, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
         nz = cv.findNonZero(self.hm_mask_image)
 
-    def generateSampleGrids(self):
+    def generateSampleMidpoints(self):
         midpoints = []
         for r in range(self.stride - 1, self.nr - self.stride + 1):
             for c in range(self.stride - 1, self.nc - self.stride + 1):
                 midpoints.append((r, c))
         print 'midpoints', midpoints
-        return self.generateGridsAroundMidpoints(midpoints)
+        return midpoints # self.generateGridsAroundMidpoints(midpoints)
 
-    def generateGridsAroundMidpoints(self, midpoints):
-        # row-major
-        grids = []
-        offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 0),
-                   (0, 1), (1, -1), (1, 0), (1, 1)]
-        for pt in midpoints:
-            one_square = []
-            for offset in self.scaled_offsets:
-                one_square.append([(pt[0] + offset[0]),
-                                   (pt[1] + offset[1])])
-            grids.append(one_square)
-        return grids
+    # def generateGridsAroundMidpoints(self, midpoints):
+    #     # row-major
+    #     grids = []
+    #     # offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 0),
+    #             #    (0, 1), (1, -1), (1, 0), (1, 1)]
+    #     for pt in midpoints:
+    #         one_square = []
+    #         for offset in self.scaled_offsets:
+    #             one_square.append([(pt[0] + offset[0]),
+    #                                (pt[1] + offset[1])])
+    #         grids.append(one_square)
+    #     return grids
 
-    def grid_and_angle_to_eef_pose(self, grid, angle):
-        midpoint = self.get_grid_midpoint(grid)
-        xw, yw = self.grid_coord_to_world_coord(midpoint[0], midpoint[1])
+    def midpoint_and_angle_to_eef_pose(self, midpoint, angle):
+        xw, yw = self.pixel_coord_to_world_coord(midpoint[0], midpoint[1])
         ps = PoseStamped()
         quat = tf.transformations.quaternion_from_euler(
             -math.pi, 0, -angle) # TBA +/-!!!
@@ -838,17 +837,17 @@ class GraspDataCollection:
         ps.pose.orientation.w = quat[3]
         return ps
 
-    def get_grid_midpoint(self, grid):
-        return grid[len(grid)/2]
+    # def get_grid_midpoint(self, grid):
+    #     return grid[len(grid)/2]
 
-    def predict_grasp_success_probability(self, grid, angle):
+    def predict_grasp_success_probability(self, midpoint, angle):
         # get the actual points to be sampled
-        hm_vals_at_grid = self.get_height_map_values_at_grid_and_angle(grid, angle)
+        hm_vals_at_midpoint = self.get_height_map_values_at_midpoint_and_angle(midpoint, angle)
         # put these into the model
-        prob = np.sum(hm_vals_at_grid) # reshape(grid, grid.size()) # np.random.uniform()
+        prob = np.sum(hm_vals_at_midpoint) # reshape(grid, grid.size()) # np.random.uniform()
         return prob # TODO update
 
-    def rotate_hm_by_angle_about_point(self, x, y, angle):
+    def transform_hm(self, x, y, angle):
         # shift to a new center, which will become the center of rotation
         # https://docs.opencv.org/3.0-beta/doc/py_tutorials/py_imgproc/py_geometric_transformations/py_geometric_transformations.html
         im = self.hm_image
@@ -856,30 +855,29 @@ class GraspDataCollection:
         image_tr = cv2.warpAffine(
             im, Mt, im.shape[::-1], borderMode=cv2.BORDER_CONSTANT, borderValue=0)
         image_rot = imutils.rotate(image_tr, -angle*180/math.pi) #+/- angle TODO
-        # print image_rot
         return image_rot
 
-    def get_height_map_values_at_grid_and_angle(self, grid, angle):
-        num_elements_in_grid = len(grid)
+    def get_height_map_values_at_midpoint_and_angle(self, midpoint, angle):
+        num_elements_in_grid = len(self.scaled_offsets)
         side_length = math.sqrt(num_elements_in_grid) # HACK!!!
         vals = []
-        mp = self.get_grid_midpoint(grid)
-        hm_transformed_to_desired_eef_pose = self.rotate_hm_by_angle_about_point(mp[0], mp[1], angle)
-        # print hm_transformed_to_desired_eef_pose
-        # print mp, angle
+        hm_transformed_to_desired_eef_pose = self.transform_hm(midpoint[0], midpoint[1], angle)
+        print hm_transformed_to_desired_eef_pose
+        print midpoint, angle
         for offset in self.scaled_offsets:
             vals.append(hm_transformed_to_desired_eef_pose[offset[0] + self.nr/2, offset[1] + self.nc/2]) # TODO r/c?
         vals = np.reshape(vals, [side_length, side_length])
-        # print vals
+        print vals
         return vals
 
-    def generate_grasp_pose_candidates(self, grids, angles):
+    def generate_grasp_pose_candidates(self, midpoints, angles):
         probs = []
-        for grid in grids:
+        print 'scaled offets:', self.scaled_offsets
+        for midpoint in midpoints:
             for angle in angles: 
-                print "midpoint: ", self.get_grid_midpoint(grid), " angle: ", angle
-                pose = self.grid_and_angle_to_eef_pose(grid, angle)
-                probs.append((self.predict_grasp_success_probability(grid, angle), pose))
+                print "midpoint: ", midpoint, " angle: ", angle
+                pose = self.midpoint_and_angle_to_eef_pose(midpoint, angle)
+                probs.append((self.predict_grasp_success_probability(midpoint, angle), pose))
         probs_descending = sorted(probs, reverse=True)
         # print [x for x in probs_descending[:self.num_grasp_candidates_to_generate]]
         return [x[1] for x in probs_descending[:self.num_grasp_candidates_to_generate]]
@@ -895,9 +893,9 @@ def main(args):
     while not gdc.gm_received or not gdc.hm_received:
         print "waiting"
         rospy.sleep(0.5)
-    grids = gdc.generateSampleGrids()
+    midpoints = gdc.generateSampleMidpoints()
     angles = gdc.generateSampleAngles()
-    grasp_candidates = gdc.generate_grasp_pose_candidates(grids, angles)
+    grasp_candidates = gdc.generate_grasp_pose_candidates(midpoints, angles)
 
     quit()
 
