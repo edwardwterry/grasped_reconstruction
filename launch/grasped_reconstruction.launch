@@ -9,6 +9,6 @@
        gMax: 255
        bMin: 0
        bMax: 255 -->
-       object_frame_id: "/cube1"
+       object_frame_id: "/obj"
       </rosparam>
 </launch>
