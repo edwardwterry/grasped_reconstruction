@@ -632,9 +632,10 @@ public:
     std::vector<std::vector<float>> all_view_entropies;
     float highest_entropy = 0.0f;
     geometry_msgs::PoseStamped best_eef_pose;
+    int best_view_id;
     std::set<int> finger_occluded_voxels;
+    std::vector<std::set<int>> finger_occluded_voxels_by_grasp_id;
     Eigen::Quaternionf best_view;
-    std::vector<geometry_msgs::PoseStamped> best_eef_poses;
     int count = 0;
     for (auto it = req.eef_poses.poses.begin(); it != req.eef_poses.poses.end(); it++) // go through every candidate pose
     {
@@ -642,7 +643,9 @@ public:
       ps.pose = *it;
       ps.header.frame_id = "/world";
       getVoxelIdsOccludedByFingers(ps, finger_occluded_voxels);
-      Eigen::Quaternionf best_view_per_pose = calculateNextBestView(finger_occluded_voxels, view_entropies);
+      finger_occluded_voxels_by_grasp_id.push_back(finger_occluded_voxels);
+      int best_view_id_per_pose;
+      Eigen::Quaternionf best_view_per_pose = calculateNextBestView(finger_occluded_voxels, view_entropies, best_view_id_per_pose);
       all_view_entropies.push_back(view_entropies);
       float max_entropy = *std::max_element(view_entropies.begin(), view_entropies.end());
       if (it == req.eef_poses.poses.begin())
@@ -650,8 +653,8 @@ public:
       if (max_entropy > highest_entropy)
       {
         best_eef_pose = ps;
-        best_eef_poses.push_back(best_eef_pose);
         best_view = best_view_per_pose;
+        best_view_id = best_view_id_per_pose;
         best_view_entropies = view_entropies;
         highest_entropy = max_entropy;
       }
@@ -666,14 +669,14 @@ public:
 
     publishEntropyArrowSphere(best_view_entropies);
 
-    geometry_msgs::Transform tf;
-    tf.translation.x = n_T_w.getOrigin().x();
-    tf.translation.y = n_T_w.getOrigin().y();
-    tf.translation.z = n_T_w.getOrigin().z();
-    tf.rotation.x = n_T_w.getRotation()[0];
-    tf.rotation.y = n_T_w.getRotation()[1];
-    tf.rotation.z = n_T_w.getRotation()[2];
-    tf.rotation.w = n_T_w.getRotation()[3];
+    // geometry_msgs::Transform tf;
+    // tf.translation.x = n_T_w.getOrigin().x();
+    // tf.translation.y = n_T_w.getOrigin().y();
+    // tf.translation.z = n_T_w.getOrigin().z();
+    // tf.rotation.x = n_T_w.getRotation()[0];
+    // tf.rotation.y = n_T_w.getRotation()[1];
+    // tf.rotation.z = n_T_w.getRotation()[2];
+    // tf.rotation.w = n_T_w.getRotation()[3];
     // res.nbv = tf;
     // res.eef_pose = best_eef_pose;
     // this worked fine for a single NBV being returned
@@ -683,13 +686,20 @@ public:
     static_transformStamped.header.stamp = ros::Time::now();
     static_transformStamped.header.frame_id = "world";
     static_transformStamped.child_frame_id = "nbv";
-    static_transformStamped.transform.translation.x = n_T_w.getOrigin().x();
+    /*static_transformStamped.transform.translation.x = n_T_w.getOrigin().x();
     static_transformStamped.transform.translation.y = n_T_w.getOrigin().y();
     static_transformStamped.transform.translation.z = n_T_w.getOrigin().z();
     static_transformStamped.transform.rotation.x = n_T_w.getRotation()[0];
     static_transformStamped.transform.rotation.y = n_T_w.getRotation()[1];
     static_transformStamped.transform.rotation.z = n_T_w.getRotation()[2];
-    static_transformStamped.transform.rotation.w = n_T_w.getRotation()[3];
+    static_transformStamped.transform.rotation.w = n_T_w.getRotation()[3];*/ // orig
+    static_transformStamped.transform.translation.x = nbv_origins_.at(best_view_id)[0];
+    static_transformStamped.transform.translation.y = nbv_origins_.at(best_view_id)[1];
+    static_transformStamped.transform.translation.z = nbv_origins_.at(best_view_id)[2];
+    static_transformStamped.transform.rotation.x = best_view.x();
+    static_transformStamped.transform.rotation.y = best_view.y();
+    static_transformStamped.transform.rotation.z = best_view.z();
+    static_transformStamped.transform.rotation.w = best_view.w();
     static_broadcaster.sendTransform(static_transformStamped);
 
     // get the k best views across all grasps considered
@@ -701,18 +711,27 @@ public:
       for (size_t view_index = 0; view_index < nbv_origins_.size(); view_index++)
       {
         all_view_entropies_row_vector.push_back(all_view_entropies[grasp_index][view_index]); // hope it's the right way around
+        std::cout<<"e at push: "<<all_view_entropies[grasp_index][view_index]<<std::endl;
       }
+    }
+
+    for (const auto & e : all_view_entropies_row_vector)
+    {
+      std::cout<<"e: "<<e<<std::endl;
     }
     // https://stackoverflow.com/questions/14902876/indices-of-the-k-largest-elements-in-an-unsorted-length-n-array
     std::priority_queue<std::pair<float, std::pair<int, int>>> pq;
     for (int i = 0; i < all_view_entropies_row_vector.size(); ++i)
     {
-      pq.push(std::make_pair(all_view_entropies_row_vector[i], std::make_pair(i % all_view_entropies.size(), i / all_view_entropies.size())));
+      std::cout<<"i % nbv_orientations_.size(): "<<i % nbv_orientations_.size()<<std::endl;
+      std::cout<<"i / nbv_orientations_.size(): "<<i / nbv_orientations_.size()<<std::endl;
+      pq.push(std::make_pair(all_view_entropies_row_vector[i], std::make_pair(i / all_view_entropies.size(), i % all_view_entropies.size()))); // why backwards?!?! 
     }
     int k = req.num_nbvs_to_request.data;
     for (int i = 0; i < k; ++i)
     {
       top_ranked_nbv_ids_and_grasp_ids.push_back(pq.top().second);
+      std::cout<<"Rank: "<< i + 1<<" e: "<<pq.top().first<<" nbv index: "<<pq.top().second.first<<" grasp index: "<<pq.top().second.second<<std::endl;
       pq.pop();
     }
 
@@ -723,6 +742,7 @@ public:
     {
       Eigen::Quaternionf nbv_orientation = nbv_orientations_[top_ranked_nbv_ids_and_grasp_ids[i].first];
       int grasp_id = top_ranked_nbv_ids_and_grasp_ids[i].second;
+      std::cout<<"index: "<<i<<" grasp id: "<<grasp_id<<" nbv ori: \n"<<nbv_orientation.matrix()<<std::endl;
       tf::Quaternion q(nbv_orientation.x(), nbv_orientation.y(), nbv_orientation.z(), nbv_orientation.w());
       tf::Transform t;
       t.setRotation(q);
@@ -1016,7 +1036,7 @@ public:
 
   void tabletopClbk(const sensor_msgs::PointCloud2ConstPtr &msg)
   {
-    std::cout << "Preparing tabletop!" << std::endl;
+    // std::cout << "Preparing tabletop!" << std::endl;
     // http://wiki.ros.org/pcl/Tutorials#pcl.2BAC8-Tutorials.2BAC8-hydro.sensor_msgs.2BAC8-PointCloud2
     // Convert the sensor_msgs/PointCloud2 data to pcl/PointCloud
     sensor_msgs::PointCloud2Ptr msg_transformed(new sensor_msgs::PointCloud2());
@@ -1397,13 +1417,13 @@ public:
     std::cout << "Appended and included point cloud with probabilities!" << std::endl;
   }
 
-  Eigen::Quaternionf calculateNextBestView(const std::set<int> &finger_occluded_voxels, std::vector<float> &view_entropies)
+  Eigen::Quaternionf calculateNextBestView(const std::set<int> &finger_occluded_voxels, std::vector<float> &view_entropies, int best_view_id)
   {
     std::cout << "Beginning calculation of next best view!" << std::endl;
     Eigen::Vector4f best_view;
     best_view << 0.0f, 0.0f, 0.0f, 0.0f;
     float entropy = 0.0f;
-    int best_view_id;
+    // int best_view_id;
     int view_id = 0;
     for (const auto &v : nbv_origins_)
     {
