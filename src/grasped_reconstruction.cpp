@@ -56,8 +56,8 @@ public:
   PointCloud curr_pc;
   bool orig_observed_set_ = false;
   bool orig_unobserved_set_ = false;
-  int NUM_AZIMUTH_POINTS = 8;
-  int NUM_ELEVATION_POINTS = 8;
+  int NUM_AZIMUTH_POINTS = 6;
+  int NUM_ELEVATION_POINTS = 4;
   float VIEW_RADIUS = 0.2f;
   float TABLETOP_HEIGHT = 0.735f;
   float P_OCC = 0.99f;
@@ -90,7 +90,7 @@ public:
   pcl::PointXYZ orig_bb_min_, orig_bb_max_;
   std::vector<float> leaf_size_;
   int nr_, nc_, nl_;
-  float LEAF_SIZE = 0.01f;
+  float LEAF_SIZE = 0.025f; // 0.01f
   int num_voxels_;
 
   // gripper config
@@ -629,10 +629,13 @@ public:
   {
     std::vector<float> view_entropies;
     std::vector<float> best_view_entropies;
+    std::vector<std::vector<float>> all_view_entropies;
     float highest_entropy = 0.0f;
     geometry_msgs::PoseStamped best_eef_pose;
     std::set<int> finger_occluded_voxels;
     Eigen::Quaternionf best_view;
+    std::vector<geometry_msgs::PoseStamped> best_eef_poses;
+    int count = 0;
     for (auto it = req.eef_poses.poses.begin(); it != req.eef_poses.poses.end(); it++) // go through every candidate pose
     {
       geometry_msgs::PoseStamped ps;
@@ -640,12 +643,14 @@ public:
       ps.header.frame_id = "/world";
       getVoxelIdsOccludedByFingers(ps, finger_occluded_voxels);
       Eigen::Quaternionf best_view_per_pose = calculateNextBestView(finger_occluded_voxels, view_entropies);
+      all_view_entropies.push_back(view_entropies);
       float max_entropy = *std::max_element(view_entropies.begin(), view_entropies.end());
       if (it == req.eef_poses.poses.begin())
         ROS_ASSERT(max_entropy > 0.0f);
       if (max_entropy > highest_entropy)
       {
         best_eef_pose = ps;
+        best_eef_poses.push_back(best_eef_pose);
         best_view = best_view_per_pose;
         best_view_entropies = view_entropies;
         highest_entropy = max_entropy;
@@ -669,8 +674,9 @@ public:
     tf.rotation.y = n_T_w.getRotation()[1];
     tf.rotation.z = n_T_w.getRotation()[2];
     tf.rotation.w = n_T_w.getRotation()[3];
-    res.nbv = tf;
-    res.eef_pose = best_eef_pose;
+    // res.nbv = tf;
+    // res.eef_pose = best_eef_pose;
+    // this worked fine for a single NBV being returned
 
     geometry_msgs::TransformStamped static_transformStamped;
 
@@ -685,6 +691,55 @@ public:
     static_transformStamped.transform.rotation.z = n_T_w.getRotation()[2];
     static_transformStamped.transform.rotation.w = n_T_w.getRotation()[3];
     static_broadcaster.sendTransform(static_transformStamped);
+
+    // get the k best views across all grasps considered
+
+    std::vector<float> all_view_entropies_row_vector;
+    std::vector<std::pair<int, int>> top_ranked_nbv_ids_and_grasp_ids; // first is nbv id and second is grasp id
+    for (size_t grasp_index = 0; grasp_index < all_view_entropies.size(); grasp_index++)
+    {
+      for (size_t view_index = 0; view_index < nbv_origins_.size(); view_index++)
+      {
+        all_view_entropies_row_vector.push_back(all_view_entropies[grasp_index][view_index]); // hope it's the right way around
+      }
+    }
+    // https://stackoverflow.com/questions/14902876/indices-of-the-k-largest-elements-in-an-unsorted-length-n-array
+    std::priority_queue<std::pair<float, std::pair<int, int>>> pq;
+    for (int i = 0; i < all_view_entropies_row_vector.size(); ++i)
+    {
+      pq.push(std::make_pair(all_view_entropies_row_vector[i], std::make_pair(i % all_view_entropies.size(), i / all_view_entropies.size())));
+    }
+    int k = req.num_nbvs_to_request.data;
+    for (int i = 0; i < k; ++i)
+    {
+      top_ranked_nbv_ids_and_grasp_ids.push_back(pq.top().second);
+      pq.pop();
+    }
+
+    geometry_msgs::PoseArray nbv_poses, eef_poses;
+    nbv_poses.header.frame_id = "world";
+    eef_poses.header.frame_id = "world";
+    for (size_t i = 0; i < top_ranked_nbv_ids_and_grasp_ids.size(); ++i)
+    {
+      Eigen::Quaternionf nbv_orientation = nbv_orientations_[top_ranked_nbv_ids_and_grasp_ids[i].first];
+      int grasp_id = top_ranked_nbv_ids_and_grasp_ids[i].second;
+      tf::Quaternion q(nbv_orientation.x(), nbv_orientation.y(), nbv_orientation.z(), nbv_orientation.w());
+      tf::Transform t;
+      t.setRotation(q);
+      tf::Transform n_T_w(t * origobj_T_w_);
+      geometry_msgs::Pose nbv_pose;
+      nbv_pose.position.x = n_T_w.getOrigin().x();
+      nbv_pose.position.y = n_T_w.getOrigin().y();
+      nbv_pose.position.z = n_T_w.getOrigin().z();
+      nbv_pose.orientation.x = n_T_w.getRotation()[0];
+      nbv_pose.orientation.y = n_T_w.getRotation()[1];
+      nbv_pose.orientation.z = n_T_w.getRotation()[2];
+      nbv_pose.orientation.w = n_T_w.getRotation()[3];
+      nbv_poses.poses.push_back(nbv_pose);
+      eef_poses.poses.push_back(req.eef_poses.poses[grasp_id]);
+    }
+    res.nbv_poses = nbv_poses;
+    res.eef_poses = eef_poses;
   }
 
   void publishEntropyArrowSphere(std::vector<float> view_entropies)

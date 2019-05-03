@@ -53,3 +53,4 @@
 #include <pcl/filters/crop_hull.h>
 #include <grasped_reconstruction/CalculateNbv.h>
 #include <grasped_reconstruction/CaptureAndProcessObservation.h>
+#include <queue>
