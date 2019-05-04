@@ -222,6 +222,7 @@ public:
     res.GT_UNOBS_EST_OCC.data = conf(Observation::UNOBSERVED, Observation::OCCUPIED);
     res.GT_UNOBS_EST_FREE.data = conf(Observation::UNOBSERVED, Observation::FREE);
     res.GT_UNOBS_EST_UNOBS.data = conf(Observation::UNOBSERVED, Observation::UNOBSERVED);
+    return true;
   }
 
   void setVolumetricGroundTruthClbk(const geometry_msgs::PoseArray &msg)
@@ -954,6 +955,7 @@ public:
     }
     res.nbv_poses = nbv_poses;
     res.eef_poses = eef_poses;
+    return true;
   }
 
   void publishEntropyArrowSphere(std::vector<float> view_entropies)

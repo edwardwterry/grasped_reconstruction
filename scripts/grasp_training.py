@@ -984,6 +984,16 @@ class GraspDataCollection:
     def generateSampleAngles(self):
         return [x/float(self.num_grasp_angles_to_try) * math.pi * 2.0 for x in range(self.num_grasp_angles_to_try)]
 
+    def evaluate_against_gt(self):
+        try:
+            req = rospy.ServiceProxy('/eval_gt', GTEval)
+            msg = Bool()
+            msg.data = True
+            res = req(msg)
+            print res
+        except rospy.ServiceException, e:
+            print "Service call failed: %s" % e        
+
     def manage_collision_matrix(self):
         allowed_collision_elements = ['jaco_6_hand_limb', 'jaco_7_finger_mount_index', 'jaco_7_finger_mount_pinkie', 'jaco_7_finger_mount_thumb',
                                       'jaco_8_finger_index', 'jaco_8_finger_pinkie', 'jaco_8_finger_thumb', 'jaco_9_finger_index_tip', 'jaco_9_finger_pinkie_tip', 'jaco_9_finger_thumb_tip']
@@ -1051,9 +1061,11 @@ def main(args):
     angles = gdc.generateSampleAngles()
     # # quit()
     count = 0
+
+    gdc.evaluate_against_gt()
     # ### UNCOMMENT TO RETURN TO NORMAL
     # gdc.manage_collision_matrix()
-    # quit()
+    quit()
     # do the actual sequence
     while gdc.current_trial_no < gdc.total_num_trials:
         # gdc.save_eef_pose_at_grasp()

@@ -47,15 +47,14 @@ class GTParser:
             pass
         self.gt_geom_pub.publish(pa)
 
-
 def main(args):
     mesh_name = args[1]
     rospy.init_node('gt_parser')
     gp = GTParser(mesh_name)
-    while True:
-        rospy.spin()
-        if rospy.is_shutdown():
-            break
+    # while True:
+    #     rospy.spin()
+    #     if rospy.is_shutdown():
+    #         break
 
 
 if __name__ == '__main__':
