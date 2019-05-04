@@ -203,13 +203,16 @@ public:
 
   bool evaluateOccupancyGridAgainstGroundTruth(grasped_reconstruction::GTEval::Request &req, grasped_reconstruction::GTEval::Response &res)
   {
-    Eigen::MatrixXi conf(3, 3);
+    std::cout<<"Received service call!"<<std::endl;
+    Eigen::MatrixXi conf = Eigen::MatrixXi::Zero(3, 3);
     for (size_t i = 0; i < num_voxels_; ++i)
     {
       int gt_state = cell_occupancy_state_gt_.find(i)->second;
       int est_state = cell_occupancy_state_.find(i)->second;
-      conf(gt_state, est_state)++;
+      // std::cout<<"i ig est: "<<i<<" "<<gt_state<<" "<<est_state<<std::endl;
+      conf(gt_state, est_state)++;// = conf(gt_state, est_state) + 1;
     }
+    std::cout<<"conf matrix: \n"<<conf.matrix()<<std::endl;
     res.GT_OCC_EST_OCC.data = conf(Observation::OCCUPIED, Observation::OCCUPIED);
     res.GT_OCC_EST_FREE.data = conf(Observation::OCCUPIED, Observation::FREE);
     res.GT_OCC_EST_UNOBS.data = conf(Observation::OCCUPIED, Observation::UNOBSERVED);
@@ -223,6 +226,7 @@ public:
 
   void setVolumetricGroundTruthClbk(const geometry_msgs::PoseArray &msg)
   {
+    std::cout<<"Received gt clbk message!"<<std::endl;
     pcl::CropHull<pcl::PointXYZ> cropHullFilter;
     boost::shared_ptr<PointCloud> hullCloud(new PointCloud());
     for (const auto &p : msg.poses)
@@ -237,6 +241,7 @@ public:
             pc_prim.push_back(pcl::PointXYZ(origobj_T_w_.getOrigin().x() + p.position.x + i * p.orientation.x,
                                             origobj_T_w_.getOrigin().y() + p.position.y + j * p.orientation.y,
                                             origobj_T_w_.getOrigin().z() + p.position.z + k * p.orientation.z));
+            std::cout<<"new point: "<<pc_prim.back()<<std::endl;
           }
         }
       }
