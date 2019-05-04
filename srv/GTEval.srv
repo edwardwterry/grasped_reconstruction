@@ -1,0 +1,13 @@
+std_msgs/Bool trigger 
+
+--- 
+
+std_msgs/Int32 GT_OCC_EST_OCC
+std_msgs/Int32 GT_OCC_EST_FREE
+std_msgs/Int32 GT_OCC_EST_UNOBS
+std_msgs/Int32 GT_FREE_EST_OCC
+std_msgs/Int32 GT_FREE_EST_FREE
+std_msgs/Int32 GT_FREE_EST_UNOBS
+std_msgs/Int32 GT_UNOBS_EST_OCC
+std_msgs/Int32 GT_UNOBS_EST_FREE
+std_msgs/Int32 GT_UNOBS_EST_UNOBS

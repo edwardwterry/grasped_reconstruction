@@ -79,6 +79,7 @@ add_service_files(
   FILES
   CalculateNbv.srv
   CaptureAndProcessObservation.srv
+  GTEval.srv
 #   Service2.srv
 )
 

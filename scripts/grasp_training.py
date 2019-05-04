@@ -20,12 +20,12 @@ from moveit_msgs.msg import RobotState
 from moveit_msgs.srv import GetPositionFK
 from moveit_msgs.srv import GetCartesianPath
 from moveit_msgs.srv import GetMotionPlan
-from moveit_msgs.msg import Grasp, PlanningScene, AllowedCollisionMatrix, AttachedCollisionObject
-from moveit_msgs.srv import ApplyPlanningScene
+from moveit_msgs.msg import Grasp, PlanningScene, AllowedCollisionMatrix, AttachedCollisionObject, PlanningSceneComponents
+from moveit_msgs.srv import ApplyPlanningScene, GetPlanningScene
 from moveit_msgs.msg import MotionPlanRequest, Constraints, JointConstraint, RobotTrajectory
 from control_msgs.msg import FollowJointTrajectoryAction, FollowJointTrajectoryGoal
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Header, String, Bool
+from std_msgs.msg import Header, String, Bool, Int32
 from grid_map_msgs.msg import GridMap
 from grasped_reconstruction.srv import *
 from grasp_execution_msgs.msg import GraspControlAction, GraspControlGoal, GraspAction, GraspGoal, GraspData
@@ -55,12 +55,13 @@ class GraspDataCollection:
         self.total_num_trials = 2
         self.current_trial_no = 0
         self.object_name = 'obj'  # change if  a new obj type
+        # self.object_name = 'cube1'  # change if  a new obj type
         self.planning_group_name = 'Arm'
         self.pre_grasp_height = 1.3
         self.post_grasp_height = 1.3
         self.lift_height = 1.3
-        self.joint_angle_tolerance = 0.01
-        self.hand_height_offset = 0.20 # 0.18 for cube, 0.20? for objects
+        self.joint_angle_tolerance = 0.05
+        self.hand_height_offset = 0.25  # 0.18 for cube, 0.20? for objects
         self.reference_frame = 'world'
         self.model_name = 'jaco_on_table'
         self.palm_link = 'jaco_fingers_base_link'
@@ -74,11 +75,12 @@ class GraspDataCollection:
         self.grasp_eef_pose_to_achieve_nbv = PoseStamped()
         # self.joints_to_exclude = ['base_to_jaco_on_table', 'jaco_finger_joint_0', # was working for cube
         #                           'jaco_finger_joint_2', 'jaco_finger_joint_4']
-        self.joints_to_exclude = ['base_to_jaco_on_table']        
+        self.joints_to_exclude = ['base_to_jaco_on_table']
         self.joint_traj_action_topic = '/jaco/joint_trajectory_action'
         self.grasp_action_topic_jen = '/jaco/grasp_execution/grasp'
         self.grasp_action_topic = '/pickup'  # TODO goal or no goal?
-        self.finger_links_allowed_to_touch = ['jaco_8_finger_index', 'jaco_8_finger_pinkie', 'jaco_8_finger_thumb', 'jaco_9_finger_index_tip', 'jaco_9_finger_pinkie_tip', 'jaco_9_finger_thumb_tip']
+        self.finger_links_allowed_to_touch = ['jaco_8_finger_index', 'jaco_8_finger_pinkie',
+                                              'jaco_8_finger_thumb', 'jaco_9_finger_index_tip', 'jaco_9_finger_pinkie_tip', 'jaco_9_finger_thumb_tip']
         # reads in the joint names as a list
         self.joint_names = self.load_joint_properties()
         self.finger_joint_states_at_grasp = {}
@@ -87,9 +89,9 @@ class GraspDataCollection:
         self.object_height = 0.0  # [m]
         self.object_position = [0.2, 0.0, 0.76]  # change if new object!!!
         self.offset_by_phase = {'pre': 0.1,
-            'grasp': 0.0, 'nbv_eval': 0.0}  # pre was 0.12
+                                'grasp': 0.0, 'nbv_eval': 0.0}  # pre was 0.12
         self.phase = 'pre'
-        self.finger_joint_angles_grasp = 0.9 # was 0.5
+        self.finger_joint_angles_grasp = 0.9  # was 0.5
         self.finger_joint_angles_ungrasp = 0.1
         self.finger_joint_names = ['jaco_finger_joint_0',
                                    'jaco_finger_joint_2', 'jaco_finger_joint_4']
@@ -104,6 +106,7 @@ class GraspDataCollection:
         self.gm_sub = rospy.Subscriber(
             "/elevation_mapping/elevation_map", GridMap, self.gm_clbk, queue_size=1)
         self.joint_states_at_pre = JointState()
+        self.joint_states_at_raised = JointState()
         self.eef_height_at_grasp = 0.0
         self.tf_listener = TransformListener()
         self.tf_broadcaster = TransformBroadcaster()
@@ -133,7 +136,7 @@ class GraspDataCollection:
         self.nr = 0
         self.nc = 0
         self.basic_offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 0),
-                   (0, 1), (1, -1), (1, 0), (1, 1)]
+                              (0, 1), (1, -1), (1, 0), (1, 1)]
         self.scaled_offsets = self.basic_offsets
         self.stride = 0
 
@@ -173,13 +176,17 @@ class GraspDataCollection:
             # p = self.generate_grasp_pose('nbv_eval')
             for g in candidate_grasps:
                 eef_poses.poses.append(g.pose)
-            res = calculate_nbv(eef_poses, self.num_nbvs_to_request)
-
+            num_to_req = Int32()
+            num_to_req.data = self.num_nbvs_to_request
+            res = calculate_nbv(eef_poses, num_to_req)
+            print res
             for p in res.nbv_poses.poses:
                 self.top_ranked_nbvs.append(p)
             # self.nbv_tf = res.nbv
-            self.grasp_eef_pose_to_achieve_nbv = res.eef_poses.pose[0] # just take the best one for simplicity
-            print self.nbv_tf, self.grasp_eef_pose_to_achieve_nbv
+            self.grasp_eef_pose_to_achieve_nbv.header.frame_id = "world"
+            # just take the best one for simplicity
+            self.grasp_eef_pose_to_achieve_nbv.pose = res.eef_poses.poses[0]
+            # print self.nbv_tf, self.grasp_eef_pose_to_achieve_nbv
             # grasp_pose = res.eef_pose.pose
             # dummy = Transform()
             # dummy.rotation.x = -0.5
@@ -193,17 +200,17 @@ class GraspDataCollection:
 
     def convertTransformMsgToTf(self, transform):
         tf_t = [transform.translation.x,
-            transform.translation.y, transform.translation.z]
+                transform.translation.y, transform.translation.z]
         tf_r = [transform.rotation.x, transform.rotation.y,
-            transform.rotation.z, transform.rotation.w]
+                transform.rotation.z, transform.rotation.w]
         return (tf_t, tf_r)
 
     def convertPoseMsgToTf(self, pose_msg):
         tf_t = [pose_msg.position.x,
-            pose_msg.position.y, pose_msg.position.z]
+                pose_msg.position.y, pose_msg.position.z]
         tf_r = [pose_msg.orientation.x, pose_msg.orientation.y,
-            pose_msg.orientation.z, pose_msg.orientation.w]
-        return (tf_t, tf_r)            
+                pose_msg.orientation.z, pose_msg.orientation.w]
+        return (tf_t, tf_r)
 
     def generate_nbv_pose(self, angle, rank):
         # https://answers.ros.org/question/133331/multiply-two-tf-transforms-converted-to-4x4-matrices-in-python/
@@ -323,7 +330,7 @@ class GraspDataCollection:
         # TODO extract max and min of cv_image
         # self.hm_image = cv2.normalize(
         #     self.hm_image, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        
+
         self.hm_received = True
         # print self.hm_image
 
@@ -428,7 +435,8 @@ class GraspDataCollection:
             else:  # for the presentation pose
                 ik.pose_stamped = eef_pose
             if not phase == 'present':
-                ik.pose_stamped.pose.position.z = self.get_object_height() + self.hand_height_offset + self.offset_by_phase[phase]  # 0.24 self.hand_height_offsetgood 0.4
+                ik.pose_stamped.pose.position.z = self.get_object_height() + self.hand_height_offset + \
+                    self.offset_by_phase[phase]  # 0.24 self.hand_height_offsetgood 0.4
             print 'Aiming for eef height: ', ik.pose_stamped.pose.position.z
             ik.timeout.secs = 3.0  # [s]
             ik.attempts = 1
@@ -488,7 +496,8 @@ class GraspDataCollection:
         ps.header.frame_id = "/" + self.reference_frame
         ps.pose.position.x = x
         ps.pose.position.y = y
-        ps.pose.position.z = self.get_object_height() + self.hand_height_offset + offset  # 0.24 0.18good 0.4
+        ps.pose.position.z = self.get_object_height() + self.hand_height_offset + \
+            offset  # 0.24 0.18good 0.4
         q = tf.transformations.quaternion_from_euler(
             math.pi, 0, self.grasp_theta, axes='sxyz')
         ps.pose.orientation.x = q[0]
@@ -572,7 +581,7 @@ class GraspDataCollection:
         # print waypoints
         jump_threshold = 10
         max_step = 0.02
-        avoid_collisions = False # was true
+        avoid_collisions = False  # was true
         path_constraints = Constraints()
         try:
             req = rospy.ServiceProxy(
@@ -739,6 +748,9 @@ class GraspDataCollection:
     #     self.joint_states_at_grasp = self.get_joint_states()
     #     print 'joint states at grasp\n', self.joint_states_at_pre
 
+    def save_joint_states_at_raised(self):
+        self.joint_states_at_raised = self.get_joint_states()
+        print 'joint states at raised\n', self.joint_states_at_raised
 
     def save_current_eef_pose(self, phase):
         while self.save_current_eef_pose_pub.get_num_connections() < 1:
@@ -758,8 +770,8 @@ class GraspDataCollection:
         try:
             req = rospy.ServiceProxy(
                 '/capture_and_process_observation', CaptureAndProcessObservation)
-            msg = Bool()
-            msg.data = True
+            msg = Int32()
+            msg.data = 1
             res = req(msg)
             # print res
         except rospy.ServiceException, e:
@@ -831,7 +843,8 @@ class GraspDataCollection:
         # self.hm_image = cv2.normalize(
         #     cv_image, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
         self.stride = int(self.sample_point_spacing / self.gm_res)
-        self.scaled_offsets = [(x[0] * (self.stride - 1), x[1] * (self.stride - 1)) for x in self.basic_offsets]
+        self.scaled_offsets = [
+            (x[0] * (self.stride - 1), x[1] * (self.stride - 1)) for x in self.basic_offsets]
         self.gm_received = True
         print "gm received!"
 
@@ -839,7 +852,7 @@ class GraspDataCollection:
         try:
             cv_image = self.bridge.imgmsg_to_cv2(msg, "mono8")
         except CvBridgeError as e:
-            print(e)        
+            print(e)
         self.hm_mask_image = cv2.normalize(
             cv_image, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
         nz = cv.findNonZero(self.hm_mask_image)
@@ -850,7 +863,7 @@ class GraspDataCollection:
             for c in range(self.stride - 1, self.nc - self.stride + 1):
                 midpoints.append((r, c))
         # print 'midpoints', midpoints
-        return midpoints # self.generateGridsAroundMidpoints(midpoints)
+        return midpoints  # self.generateGridsAroundMidpoints(midpoints)
 
     # def generateGridsAroundMidpoints(self, midpoints):
     #     # row-major
@@ -869,11 +882,11 @@ class GraspDataCollection:
         xw, yw = self.pixel_coord_to_world_coord(midpoint[0], midpoint[1])
         ps = PoseStamped()
         quat = tf.transformations.quaternion_from_euler(
-            -math.pi, 0, angle + math.pi/2) # TBA +/-!!! WAS -angle, should be opposite of what's in transform_hm 90deg HACK
+            -math.pi, 0, angle + math.pi/2)  # TBA +/-!!! WAS -angle, should be opposite of what's in transform_hm 90deg HACK
         ps.header.frame_id = self.reference_frame
         ps.pose.position.x = xw
         ps.pose.position.y = yw
-        ps.pose.position.z = 0.93 # TBA
+        ps.pose.position.z = 0.93  # TBA
         ps.pose.orientation.x = quat[0]
         ps.pose.orientation.y = quat[1]
         ps.pose.orientation.z = quat[2]
@@ -884,11 +897,12 @@ class GraspDataCollection:
         xw, yw = coord
         ps = PoseStamped()
         quat = tf.transformations.quaternion_from_euler(
-            -math.pi, 0, angle + math.pi/2) # TBA +/-!!! WAS -angle, should be opposite of what's in transform_hm 90deg HACK
+            -math.pi, 0, angle + math.pi/2)  # TBA +/-!!! WAS -angle, should be opposite of what's in transform_hm 90deg HACK
         ps.header.frame_id = self.reference_frame
         ps.pose.position.x = xw
         ps.pose.position.y = yw
-        ps.pose.position.z = self.get_object_height() + self.hand_height_offset + self.offset_by_phase['grasp'] #0.93 # TBA
+        ps.pose.position.z = self.get_object_height() + self.hand_height_offset + \
+            self.offset_by_phase['grasp']  # 0.93 # TBA
         ps.pose.orientation.x = quat[0]
         ps.pose.orientation.y = quat[1]
         ps.pose.orientation.z = quat[2]
@@ -900,11 +914,14 @@ class GraspDataCollection:
 
     def predict_grasp_success_probability(self, midpoint, angle):
         # get the actual points to be sampled
-        hm_vals_at_midpoint = self.get_height_map_values_at_midpoint_and_angle(midpoint, angle)
+        hm_vals_at_midpoint = self.get_height_map_values_at_midpoint_and_angle(
+            midpoint, angle)
         # put these into the model
-        sum = self.convolveTemplateWithImage(self.getExampleWeights(), hm_vals_at_midpoint)
-        prob = sum # np.sum(hm_vals_at_midpoint) # reshape(grid, grid.size()) # np.random.uniform()
-        return prob # TODO update
+        sum = self.convolveTemplateWithImage(
+            self.getExampleWeights(), hm_vals_at_midpoint)
+        # np.sum(hm_vals_at_midpoint) # reshape(grid, grid.size()) # np.random.uniform()
+        prob = sum
+        return prob  # TODO update
 
     def getExampleWeights(self):
         return [0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0]
@@ -912,17 +929,18 @@ class GraspDataCollection:
     def convolveTemplateWithImage(self, template, pixels):
         sum = 0
         pixels = np.divide(pixels, 255.0)
-        template = np.reshape(np.asarray(template),[3,3])
+        template = np.reshape(np.asarray(template), [3, 3])
         # print pixels, template
         # for p, t in zip(pixels, template):
-        #     sum += [p[0], p[1]] * 
-        return np.sum(np.multiply(pixels, template))/ 9.0
+        #     sum += [p[0], p[1]] *
+        return np.sum(np.multiply(pixels, template)) / 9.0
 
     def transform_hm(self, x, y, angle):
         # shift to a new center, which will become the center of rotation
         # https://docs.opencv.org/3.0-beta/doc/py_tutorials/py_imgproc/py_geometric_transformations/py_geometric_transformations.html
         im = self.hm_image
-        Mt = np.asarray([[1.0, 0.0,float(self.nr/2 - y)],[0.0,1.0,float(self.nc/2 - x)]])
+        Mt = np.asarray([[1.0, 0.0, float(self.nr/2 - y)],
+                         [0.0, 1.0, float(self.nc/2 - x)]])
         image_tr = cv2.warpAffine(
             im, Mt, im.shape[::-1], borderMode=cv2.BORDER_CONSTANT, borderValue=0)
         image_rot = imutils.rotate(image_tr, -angle*180/math.pi)
@@ -930,13 +948,16 @@ class GraspDataCollection:
 
     def get_height_map_values_at_midpoint_and_angle(self, midpoint, angle):
         num_elements_in_grid = len(self.scaled_offsets)
-        side_length = math.sqrt(num_elements_in_grid) # HACK!!!
+        side_length = math.sqrt(num_elements_in_grid)  # HACK!!!
         vals = []
-        hm_transformed_to_desired_eef_pose = self.transform_hm(midpoint[0], midpoint[1], angle)
+        hm_transformed_to_desired_eef_pose = self.transform_hm(
+            midpoint[0], midpoint[1], angle)
         # print midpoint, angle
         # print hm_transformed_to_desired_eef_pose
         for offset in self.scaled_offsets:
-            vals.append(hm_transformed_to_desired_eef_pose[offset[0] + self.nr/2, offset[1] + self.nc/2]) # TODO r/c?
+            # TODO r/c?
+            vals.append(
+                hm_transformed_to_desired_eef_pose[offset[0] + self.nr/2, offset[1] + self.nc/2])
         vals = np.reshape(vals, [side_length, side_length])
         # print vals
         return vals
@@ -945,18 +966,18 @@ class GraspDataCollection:
         probs = []
         # print 'orig image', self.hm_image
         # print 'scaled offets:', self.scaled_offsets
-        ## UNCOMMENT THIS FOR FULL HEIGHT MAP READING
+        # UNCOMMENT THIS FOR FULL HEIGHT MAP READING
         # for midpoint in midpoints:
-        #     for angle in angles: 
+        #     for angle in angles:
         #         # print "midpoint: ", midpoint, " angle: ", angle
         #         pose = self.midpoint_and_angle_to_eef_pose(midpoint, angle)
         #         probs.append((self.predict_grasp_success_probability(midpoint, angle), pose))
         # probs_descending = sorted(probs, reverse=True)
         # print [x for x in probs_descending[:self.num_grasp_candidates_to_generate]]
         # return [x[1] for x in probs_descending[:self.num_grasp_candidates_to_generate]]
-        ## UNCOMMENT THIS FOR FULL HEIGHT MAP READING
-        # mps = [(0.23, 0.06), (0.17, 0.06)] # for levels 2-4
-        mps = [(0.23, 0.0), (0.17, 0.0)] # for level 1
+        # UNCOMMENT THIS FOR FULL HEIGHT MAP READING
+        mps = [(0.23, 0.06), (0.17, 0.06)] # for levels 2-4
+        # mps = [(0.23, 0.0), (0.17, 0.0)]  # for level 1
         dummy = self.stand_in_coord_and_angle_to_eef_pose(mps[count], 0)
         return [dummy]
 
@@ -964,19 +985,43 @@ class GraspDataCollection:
         return [x/float(self.num_grasp_angles_to_try) * math.pi * 2.0 for x in range(self.num_grasp_angles_to_try)]
 
     def manage_collision_matrix(self):
+        allowed_collision_elements = ['jaco_6_hand_limb', 'jaco_7_finger_mount_index', 'jaco_7_finger_mount_pinkie', 'jaco_7_finger_mount_thumb',
+                                      'jaco_8_finger_index', 'jaco_8_finger_pinkie', 'jaco_8_finger_thumb', 'jaco_9_finger_index_tip', 'jaco_9_finger_pinkie_tip', 'jaco_9_finger_thumb_tip']
+        scene = PlanningScene()
+        acm_revised = AllowedCollisionMatrix()
         try:
             req = rospy.ServiceProxy(
-                '/apply_planning_scene', ApplyPlanningScene)
-            acm = AllowedCollisionMatrix()
-            acm.entry_names = ['obj', 'jaco_8_finger_index']
-            enabled = False
-            acm.entry_values.append(enabled)
-            ps = PlanningScene()
-            # ps.allowed_collision_matrix = acm
-            res = req(ps)
-            print res
+                '/get_planning_scene', GetPlanningScene)
+            psc = PlanningSceneComponents()
+            psc.components = 128
+            res = req(psc)
+            scene = res.scene
+            acm = res.scene.allowed_collision_matrix
+            # print acm
+            # find index of obj
+            index = acm.entry_names.index(self.object_name)
+            # find indices of all ones of interest
+            ok_collision_indices = []
+            for el in allowed_collision_elements:
+                ok_collision_indices.append(acm.entry_names.index(el))
+            for i in ok_collision_indices:
+                acm.entry_values[index].enabled[i] = True
+            # print "revised acm", acm
+            acm_revised = acm
         except rospy.ServiceException, e:
-            print "Service call failed: %s" % e    
+            print "Service call failed: %s" % e
+
+        try:
+            req = rospy.ServiceProxy('/apply_planning_scene', ApplyPlanningScene)
+            ps = scene
+            ps.is_diff = True
+            ps.allowed_collision_matrix.entry_values[index].enabled[0] = True
+            # ps.allowed_collision_matrix = acm_revised
+            print 'acm revised at send', ps.allowed_collision_matrix
+            res = req(ps)
+            print "Planning scene update request status:", res.success
+        except rospy.ServiceException, e:
+            print "Service call failed: %s" % e
 
     def save_finger_joint_states_at_grasp(self):
         js = self.get_joint_states()
@@ -991,6 +1036,7 @@ class GraspDataCollection:
             js_renewed[finger] = self.finger_joint_states_at_grasp[finger]
         # print 'should be a renewed js with better finger joint angles\n', js
         return js_renewed
+
 
 def main(args):
     rospy.init_node('grasp_data_collection')
@@ -1015,7 +1061,8 @@ def main(args):
         # height_map = gdc.height_map  # TODO make not None
         # gdc.pickup()
         # gdc.execute_grasp_action('open')
-        candidate_grasps = gdc.generate_grasp_pose_candidates(midpoints, angles, count)
+        candidate_grasps = gdc.generate_grasp_pose_candidates(
+            midpoints, angles, count)
         print candidate_grasps
         gdc.get_nbvs_and_grasp_poses(candidate_grasps)
         js_pre, _ = gdc.get_ik('pre')
@@ -1027,28 +1074,35 @@ def main(args):
         raw_input("Press to move to grasp")
         gdc.move_from_pregrasp_to_grasp(False)
         gdc.save_current_eef_pose('grasp')
-        gdc.save_finger_joint_states_at_grasp()
+        # gdc.save_finger_joint_states_at_grasp()
         # raw_input("press any key to move back")
         # rospy.sleep(2)
         gdc.actuate_fingers('close')
         raw_input("Press to move to raised")
         gdc.move_from_grasp_to_raised()
-        raw_input("Press to try to close fingers again")
-        gdc.actuate_fingers('close')
+        gdc.save_joint_states_at_raised()
+        # raw_input("Press to try to close fingers again")
+        # gdc.actuate_fingers('close')
         # gdc.move_to_state(gdc.generate_joint_states_presentation_pose())
         raw_input("Press to do nbv kinematic calcs")
-        for angle in gdc.present_roll_angle_options:
-            js, outcome = gdc.generate_nbv_pose(angle)
-            if outcome == 1:
-                gdc.supplement_with_correct_finger_joint_angles(js)
-                print 'should be a renewed js with better finger joint angles\n', js
-                gdc.move_to_state(js)
-                break
+        for rank in range(gdc.num_nbvs_to_request):
+            for angle in gdc.present_roll_angle_options:
+                js, outcome = gdc.generate_nbv_pose(angle, rank)
+                if outcome == 1:
+                    # gdc.supplement_with_correct_finger_joint_angles(js)
+                    # print 'should be a renewed js with better finger joint angles\n', js
+                    raw_input("press to move to nbv")
+                    gdc.move_to_state(js)
+                    break
+            # https://stackoverflow.com/questions/189645/how-to-break-out-of-multiple-loops-in-python
+            else:
+                continue
+            break
         gdc.save_current_eef_pose('present')
         gdc.capture_and_process_observation()
         raw_input("press any key to move back")
         rospy.sleep(2)
-        gdc.move_to_state(gdc.joint_states_at_pre)
+        gdc.move_to_state(gdc.joint_states_at_raised)
         rospy.sleep(2)
         gdc.move_from_preplace_to_place()
         gdc.save_current_eef_pose('place')

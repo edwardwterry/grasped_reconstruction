@@ -14,6 +14,7 @@ public:
     pc_anytime_sub = nh_.subscribe("/camera/depth/points", 1, &GraspedReconstruction::pcAnytimeClbk, this);
     gm_sub = nh_.subscribe("/elevation_mapping/elevation_map", 1, &GraspedReconstruction::gmClbk, this);
     tabletop_sub = nh_.subscribe("/camera/depth/points", 1, &GraspedReconstruction::tabletopClbk, this);
+    vol_gt_sub = nh_.subscribe("/gt_geom", 1, &GraspedReconstruction::setVolumetricGroundTruthClbk, this);
     // color_sub = nh_.subscribe("/camera/depth/points", 1,
     // &GraspedReconstruction::colorClbk, this);
     save_eef_pose_sub = nh_.subscribe("/save_current_eef_pose", 1, &GraspedReconstruction::saveCurrentEefPoseClbk, this);
@@ -30,9 +31,12 @@ public:
     pc_by_category_pub = n.advertise<visualization_msgs::MarkerArray>("pc_by_category", 1);
     image_transport::ImageTransport it(n);
     hm_im_pub = it.advertise("height_map_image", 1);
+    hm_vg_im_pub = it.advertise("height_map_vg_image", 1);
+    hm_vg_mask_im_pub = it.advertise("height_map_vg_mask_image", 1);
 
     calculate_nbv_service_ = nh_.advertiseService("calculate_nbv", &GraspedReconstruction::calculateNbv, this);
     capture_and_process_observation_service_ = nh_.advertiseService("capture_and_process_observation", &GraspedReconstruction::captureAndProcessObservation, this);
+    eval_gt_service_ = nh_.advertiseService("eval_gt", &GraspedReconstruction::evaluateOccupancyGridAgainstGroundTruth, this);
 
     probability_by_state_.insert(std::make_pair(Observation::OCCUPIED, P_OCC));
     probability_by_state_.insert(std::make_pair(Observation::FREE, P_FREE));
@@ -42,10 +46,10 @@ public:
   }
 
   ros::NodeHandle nh_;
-  ros::Subscriber calc_observed_points_sub, gm_sub, calc_unobserved_points_sub, save_eef_pose_sub, pc_anytime_sub, color_sub, tabletop_sub;
+  ros::Subscriber calc_observed_points_sub, gm_sub, calc_unobserved_points_sub, save_eef_pose_sub, pc_anytime_sub, color_sub, tabletop_sub, vol_gt_sub;
   ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub, entropy_arrow_pub, nbv_pub, anytime_pub, ch_points_pub, ch_pub, pc_by_category_pub;
-  ros::ServiceServer calculate_nbv_service_, capture_and_process_observation_service_;
-  image_transport::Publisher hm_im_pub;
+  ros::ServiceServer calculate_nbv_service_, capture_and_process_observation_service_, eval_gt_service_;
+  image_transport::Publisher hm_im_pub, hm_vg_im_pub, hm_vg_mask_im_pub;
   tf::TransformListener listener;
   tf::TransformBroadcaster broadcaster;
   std::unordered_map<std::string, tf::StampedTransform> eef_pose_keyframes;
@@ -67,13 +71,17 @@ public:
   bool vg_initialized_ = false;
   IndexedPointsWithState ipp_;
   std::unordered_map<int, int> cell_occupancy_state_;
+  std::unordered_map<int, int> cell_occupancy_state_gt_;
   PointCloud occluding_finger_points_;
   std::vector<Eigen::Vector4f> nbv_origins_;
   std::vector<Eigen::Quaternionf> nbv_orientations_;
   sensor_msgs::PointCloud2Ptr anytime_pc_; //(new sensor_msgs::PointCloud2);
   PointCloud bb_voxel_cloud_;
   float BB_SURFACE_MARGIN = 0.01; // [m]
-
+  float hm_xmin_, hm_xmax_, hm_ymin_, hm_ymax_;
+  int im_nr_, im_nc_;
+  cv::Mat height_map_, height_map_mask_;
+  std::vector<PointCloud> gt_convex_hull_points_;
   enum Observation
   {
     OCCUPIED,
@@ -96,6 +104,181 @@ public:
   // gripper config
   tf::StampedTransform pi_T_fbl_, th_T_fbl_, in_T_fbl_;
   float FINGER_SCALE_FACTOR = 1.2f;
+
+  void publishHeightMapFromVoxelGrid()
+  {
+    float border = 0.3; // [m] in xy plane beyond bb extent
+    get_hm_image_bounds(border);
+
+    // https://stackoverflow.com/questions/20816955/how-to-set-all-pixels-of-an-opencv-mat-to-a-specific-value
+    height_map_ = cv::Mat(im_nr_, im_nc_, CV_32FC1, cv::Scalar(0.0f));
+    height_map_mask_ = cv::Mat(im_nr_, im_nc_, CV_8UC1, cv::Scalar(0));
+
+    std::cout << "here" << height_map_.rows << " " << height_map_.cols << " " << height_map_mask_.rows << " " << height_map_mask_.cols << std::endl;
+    // std::cout<<height_map_mask<<std::endl;
+    for (int r = 0; r < nr_; ++r)
+    {
+      for (int c = 0; c < nc_; ++c)
+      {
+        int l = nl_ - 1; // start at the top
+        // grid coord to index
+        int index = gridCoordToVoxelIndex(Eigen::Vector3i(r, c, l));
+        std::cout << "here2a" << std::endl;
+        // get current occupancy state from it
+        int state = cell_occupancy_state_[index];
+        std::cout << "here2b" << std::endl;
+        int mask_val = 0;
+        while (state == Observation::FREE && l > 0)
+        {
+          l--;
+          index = gridCoordToVoxelIndex(Eigen::Vector3i(r, c, l));
+          std::cout << "here2c" << std::endl;
+          state = cell_occupancy_state_[index];
+          std::cout << "here2d" << std::endl;
+        }
+        if (state == Observation::UNOBSERVED)
+        {
+          mask_val = 255;
+          std::cout << "here2e" << std::endl;
+        }
+        int im_r, im_c;
+        Eigen::Vector4f wc = gridCoordToWorldCoord(Eigen::Vector3i(r, c, l));
+        // std::cout << "r c l" << r << " " << c << " " << l << std::endl;
+        // std::cout << "here2f" << wc.matrix() << std::endl;
+        // std::cout << "here2f" << wc(0) << " " << wc(1) << std::endl;
+        // std::cout << "hm bounds: " << hm_xmin_ << " " << hm_xmax_ << " " << hm_ymin_ << " " << hm_ymax_ << " " << im_nr_ << " " << im_nc_ << std::endl;
+        hm_voxel_grid_global_to_rc(wc(0), wc(1), im_r, im_c);
+        std::cout << wc(2) << std::endl;
+        // std::cout<< height_map.at<float>(im_r, im_c)<<std::endl; // set it to the height of the highest free voxel
+        height_map_.at<float>(im_r, im_c) = wc(2); // set it to the height of the highest free voxel
+        std::cout << mask_val << std::endl;
+        height_map_mask_.at<int>(im_r, im_c) = mask_val; // set it to the height of the highest free voxel
+        std::cout << "here2i" << std::endl;
+      }
+    }
+    std::cout << height_map_ << std::endl;
+
+    // https://stackoverflow.com/questions/27080085/how-to-convert-a-cvmat-into-a-sensor-msgs-in-ros
+    cv_bridge::CvImagePtr img_bridge(new cv_bridge::CvImage);
+    sensor_msgs::Image img_msg; // >> message to be sent
+
+    std_msgs::Header header; // empty header
+    img_bridge->image = height_map_.clone();
+    img_bridge->encoding = "32FC1";
+    img_bridge->header = header;
+    std::cout << "here3" << std::endl;
+    // img_bridge = cv_bridge::CvImage(header, sensor_msgs::image_encodings::32FC1, height_map);
+    img_bridge->toImageMsg(img_msg); // from cv_bridge to sensor_msgs::Image
+    hm_vg_im_pub.publish(img_msg);   // ros::Publisher pub_img = node.advertise<sensor_msgs::Image>("topic", queuesize);
+
+    img_bridge->image = height_map_mask_.clone();
+    img_bridge->encoding = "mono8";
+    // img_bridge = cv_bridge::CvImage(header, sensor_msgs::image_encodings::8UC1, height_map_mask);
+    img_bridge->toImageMsg(img_msg);    // from cv_bridge to sensor_msgs::Image
+    hm_vg_mask_im_pub.publish(img_msg); // ros::Publisher pub_img = node.advertise<sensor_msgs::Image>("topic", queuesize);
+  }
+
+  void get_hm_image_bounds(const float border)
+  {
+    int num_border_padding_cells_x = border / leaf_size_[0];
+    int num_border_padding_cells_y = border / leaf_size_[1];
+    hm_xmin_ = orig_bb_min_.x - num_border_padding_cells_x * leaf_size_[0];
+    hm_xmax_ = orig_bb_max_.x + num_border_padding_cells_x * leaf_size_[0];
+    hm_ymin_ = orig_bb_min_.y - num_border_padding_cells_y * leaf_size_[1];
+    hm_ymax_ = orig_bb_max_.y + num_border_padding_cells_y * leaf_size_[1];
+    im_nr_ = (hm_xmax_ - hm_xmin_) / leaf_size_[0];
+    im_nc_ = (hm_ymax_ - hm_ymin_) / leaf_size_[1];
+    std::cout << "hm bounds: " << hm_xmin_ << " " << hm_xmax_ << " " << hm_ymin_ << " " << hm_ymax_ << " " << im_nr_ << " " << im_nc_ << std::endl;
+  }
+
+  void hm_voxel_grid_global_to_rc(const float x, const float y, int im_r, int im_c)
+  {
+    std::cout << "hm bounds: " << x << " " << y << " " << leaf_size_[0] << std::endl;
+    std::cout << "hm bounds: " << hm_xmin_ << " " << hm_xmax_ << " " << hm_ymin_ << " " << hm_ymax_ << std::endl;
+
+    im_r = static_cast<int>((hm_xmax_ - x) / leaf_size_[0]);
+    im_c = static_cast<int>((hm_ymax_ - y) / leaf_size_[1]);
+    std::cout << "im_r, im_c " << im_r << " " << im_c << std::endl;
+  }
+
+  bool evaluateOccupancyGridAgainstGroundTruth(grasped_reconstruction::GTEval::Request &req, grasped_reconstruction::GTEval::Response &res)
+  {
+    Eigen::MatrixXi conf(3, 3);
+    for (size_t i = 0; i < num_voxels_; ++i)
+    {
+      int gt_state = cell_occupancy_state_gt_.find(i)->second;
+      int est_state = cell_occupancy_state_.find(i)->second;
+      conf(gt_state, est_state)++;
+    }
+    res.GT_OCC_EST_OCC.data = conf(Observation::OCCUPIED, Observation::OCCUPIED);
+    res.GT_OCC_EST_FREE.data = conf(Observation::OCCUPIED, Observation::FREE);
+    res.GT_OCC_EST_UNOBS.data = conf(Observation::OCCUPIED, Observation::UNOBSERVED);
+    res.GT_FREE_EST_OCC.data = conf(Observation::FREE, Observation::OCCUPIED);
+    res.GT_FREE_EST_FREE.data = conf(Observation::FREE, Observation::FREE);
+    res.GT_FREE_EST_UNOBS.data = conf(Observation::FREE, Observation::UNOBSERVED);
+    res.GT_UNOBS_EST_OCC.data = conf(Observation::UNOBSERVED, Observation::OCCUPIED);
+    res.GT_UNOBS_EST_FREE.data = conf(Observation::UNOBSERVED, Observation::FREE);
+    res.GT_UNOBS_EST_UNOBS.data = conf(Observation::UNOBSERVED, Observation::UNOBSERVED);
+  }
+
+  void setVolumetricGroundTruthClbk(const geometry_msgs::PoseArray &msg)
+  {
+    pcl::CropHull<pcl::PointXYZ> cropHullFilter;
+    boost::shared_ptr<PointCloud> hullCloud(new PointCloud());
+    for (const auto &p : msg.poses)
+    {
+      PointCloud pc_prim;
+      for (float i = -0.5f; i < 1; i += 1.0f)
+      {
+        for (float j = -0.5f; j < 1; j += 1.0f)
+        {
+          for (float k = -0.5f; k < 1; k += 1.0f)
+          {
+            pc_prim.push_back(pcl::PointXYZ(origobj_T_w_.getOrigin().x() + p.position.x + i * p.orientation.x,
+                                            origobj_T_w_.getOrigin().y() + p.position.y + j * p.orientation.y,
+                                            origobj_T_w_.getOrigin().z() + p.position.z + k * p.orientation.z));
+          }
+        }
+      }
+      *hullCloud = pc_prim;
+      boost::shared_ptr<PointCloud> hullPoints(new PointCloud());
+      std::vector<pcl::Vertices> hullPolygons;
+      pcl::ConvexHull<pcl::PointXYZ> cHull;
+      cHull.setInputCloud(hullCloud);
+      cHull.reconstruct(*hullPoints, hullPolygons);
+      cropHullFilter.setHullIndices(hullPolygons);
+      cropHullFilter.setHullCloud(hullPoints);
+      cropHullFilter.setDim(3);
+      cropHullFilter.setCropOutside(true);
+      boost::shared_ptr<PointCloud> pc(new PointCloud());
+
+      // a point inside the hull
+      for (size_t i = 0; i < num_voxels_; ++i)
+      {
+        Eigen::Vector4f w = voxelIndexToWorldCoord(i);
+        pc->push_back(pcl::PointXYZ(w[0], w[1], w[2]));
+      }
+      //filter points
+      cropHullFilter.setInputCloud(pc);
+      boost::shared_ptr<PointCloud> filtered(new PointCloud());
+      cropHullFilter.filter(*filtered);
+
+      for (const auto &f : *filtered)
+      {
+        Eigen::Vector4f in_point;
+        in_point << f.x, f.y, f.z, 1.0f;
+        int index = worldCoordToVoxelIndex(in_point);
+        cell_occupancy_state_gt_.insert(std::make_pair(index, Observation::OCCUPIED));
+      }
+    }
+    for (size_t i = 0; i < num_voxels_; ++i)
+    {
+      if (cell_occupancy_state_gt_.find(i) == cell_occupancy_state_gt_.end())
+      {
+        cell_occupancy_state_gt_.insert(std::make_pair(i, Observation::FREE));
+      }
+    }
+  }
 
   bool captureAndProcessObservation(grasped_reconstruction::CaptureAndProcessObservation::Request &req, grasped_reconstruction::CaptureAndProcessObservation::Response &res)
   {
@@ -259,17 +442,20 @@ public:
             }
             else
             {
+              // do occluded by finger check here first
               if (it_cell->second == Observation::OCCUPIED)
               {
                 occupied_voxel_has_been_passed = true;
                 default_state = Observation::UNOBSERVED;
                 // std::cout<<"Default state switched to UNOBS for voxel "<<i<<std::endl;
               }
+              // added
               else
               {
                 updateVoxelProbability(index, default_state);
               }
             }
+            // if the index is in the set of voxels to be excluded coz they were occluded by the hand, don't perform any probability update
             // }
           }
         }
@@ -615,6 +801,7 @@ public:
     ros::Duration(1.0).sleep();
     divideBoundingBoxIntoVoxels();
     setInitialVoxelProbabilities();
+    publishHeightMapFromVoxelGrid();
 
     for (size_t i = 0; i < num_voxels_; ++i)
     {
@@ -692,7 +879,8 @@ public:
     static_transformStamped.transform.rotation.x = n_T_w.getRotation()[0];
     static_transformStamped.transform.rotation.y = n_T_w.getRotation()[1];
     static_transformStamped.transform.rotation.z = n_T_w.getRotation()[2];
-    static_transformStamped.transform.rotation.w = n_T_w.getRotation()[3];*/ // orig
+    static_transformStamped.transform.rotation.w = n_T_w.getRotation()[3];*/
+    // orig
     static_transformStamped.transform.translation.x = nbv_origins_.at(best_view_id)[0];
     static_transformStamped.transform.translation.y = nbv_origins_.at(best_view_id)[1];
     static_transformStamped.transform.translation.z = nbv_origins_.at(best_view_id)[2];
@@ -711,27 +899,27 @@ public:
       for (size_t view_index = 0; view_index < nbv_origins_.size(); view_index++)
       {
         all_view_entropies_row_vector.push_back(all_view_entropies[grasp_index][view_index]); // hope it's the right way around
-        std::cout<<"e at push: "<<all_view_entropies[grasp_index][view_index]<<std::endl;
+        std::cout << "e at push: " << all_view_entropies[grasp_index][view_index] << std::endl;
       }
     }
 
-    for (const auto & e : all_view_entropies_row_vector)
+    for (const auto &e : all_view_entropies_row_vector)
     {
-      std::cout<<"e: "<<e<<std::endl;
+      std::cout << "e: " << e << std::endl;
     }
     // https://stackoverflow.com/questions/14902876/indices-of-the-k-largest-elements-in-an-unsorted-length-n-array
     std::priority_queue<std::pair<float, std::pair<int, int>>> pq;
     for (int i = 0; i < all_view_entropies_row_vector.size(); ++i)
     {
-      std::cout<<"i % nbv_orientations_.size(): "<<i % nbv_orientations_.size()<<std::endl;
-      std::cout<<"i / nbv_orientations_.size(): "<<i / nbv_orientations_.size()<<std::endl;
-      pq.push(std::make_pair(all_view_entropies_row_vector[i], std::make_pair(i / all_view_entropies.size(), i % all_view_entropies.size()))); // why backwards?!?! 
+      std::cout << "i % nbv_orientations_.size(): " << i % nbv_orientations_.size() << std::endl;
+      std::cout << "i / nbv_orientations_.size(): " << i / nbv_orientations_.size() << std::endl;
+      pq.push(std::make_pair(all_view_entropies_row_vector[i], std::make_pair(i / all_view_entropies.size(), i % all_view_entropies.size()))); // why backwards?!?!
     }
     int k = req.num_nbvs_to_request.data;
     for (int i = 0; i < k; ++i)
     {
       top_ranked_nbv_ids_and_grasp_ids.push_back(pq.top().second);
-      std::cout<<"Rank: "<< i + 1<<" e: "<<pq.top().first<<" nbv index: "<<pq.top().second.first<<" grasp index: "<<pq.top().second.second<<std::endl;
+      std::cout << "Rank: " << i + 1 << " e: " << pq.top().first << " nbv index: " << pq.top().second.first << " grasp index: " << pq.top().second.second << std::endl;
       pq.pop();
     }
 
@@ -742,7 +930,8 @@ public:
     {
       Eigen::Quaternionf nbv_orientation = nbv_orientations_[top_ranked_nbv_ids_and_grasp_ids[i].first];
       int grasp_id = top_ranked_nbv_ids_and_grasp_ids[i].second;
-      std::cout<<"index: "<<i<<" grasp id: "<<grasp_id<<" nbv ori: \n"<<nbv_orientation.matrix()<<std::endl;
+      std::cout << "index: " << i << " grasp id: " << grasp_id << " nbv ori: \n"
+                << nbv_orientation.matrix() << std::endl;
       tf::Quaternion q(nbv_orientation.x(), nbv_orientation.y(), nbv_orientation.z(), nbv_orientation.w());
       tf::Transform t;
       t.setRotation(q);

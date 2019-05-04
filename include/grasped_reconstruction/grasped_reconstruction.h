@@ -12,6 +12,7 @@
 #include <std_msgs/Float32.h>
 #include <std_msgs/Bool.h>
 #include <std_msgs/String.h>
+#include <std_msgs/Header.h>
 #include <algorithm>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -53,4 +54,6 @@
 #include <pcl/filters/crop_hull.h>
 #include <grasped_reconstruction/CalculateNbv.h>
 #include <grasped_reconstruction/CaptureAndProcessObservation.h>
+#include <grasped_reconstruction/GTEval.h>
 #include <queue>
+#include <cv_bridge/cv_bridge.h>

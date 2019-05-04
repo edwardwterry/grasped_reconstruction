@@ -1,0 +1,92 @@
+level1:
+  - origin:
+      x: 0
+      y: 0.06
+      z: 0.08
+    size:
+      x: 0.2
+      y: 0.04
+      z: 0.08  
+level2:
+  - origin:
+      x: 0
+      y: 0
+      z: 0.02
+    size:
+      x: 0.2
+      y: 0.16
+      z: 0.04
+  - origin:
+      x: 0
+      y: 0.06
+      z: 0.08
+    size:
+      x: 0.2
+      y: 0.04
+      z: 0.08
+level3:
+  - origin:
+      x: 0
+      y: 0
+      z: 0.02
+    size:
+      x: 0.2
+      y: 0.16
+      z: 0.04
+  - origin:
+      x: 0
+      y: 0.06
+      z: 0.08
+    size:
+      x: 0.2
+      y: 0.04
+      z: 0.08    
+  - origin:
+      x: 0
+      y: -0.06
+      z: 0.08
+    size:
+      x: 0.2
+      y: 0.04
+      z: 0.08         
+level4:
+  - origin:
+      x: 0
+      y: 0
+      z: 0.02
+    size:
+      x: 0.2
+      y: 0.16
+      z: 0.04
+  - origin:
+      x: 0
+      y: 0.06
+      z: 0.08
+    size:
+      x: 0.2
+      y: 0.04
+      z: 0.08    
+  - origin:
+      x: 0
+      y: -0.06
+      z: 0.08
+    size:
+      x: 0.2
+      y: 0.04
+      z: 0.08
+  - origin:
+      x: 0.08
+      y: 0
+      z: 0.08
+    size:
+      x: 0.04
+      y: 0.2
+      z: 0.08              
+  - origin:
+      x: -0.08
+      y: 0
+      z: 0.08
+    size:
+      x: 0.04
+      y: 0.2
+      z: 0.08
