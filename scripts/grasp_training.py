@@ -53,7 +53,7 @@ class GraspDataCollection:
     def __init__(self, verbosity):
         self.verbose = verbosity
         self.bridge = CvBridge()
-        self.total_num_trials = 2
+        self.total_num_trials = 5
         self.current_trial_no = 0
         self.object_name = 'obj'  # change if  a new obj type
         # self.object_name = 'cube1'  # change if  a new obj type
@@ -171,6 +171,7 @@ class GraspDataCollection:
 
     def get_nbvs_and_grasp_poses(self, candidate_grasps):
         rospy.wait_for_service('calculate_nbv')
+        del self.top_ranked_nbvs[:]
         try:
             calculate_nbv = rospy.ServiceProxy('calculate_nbv', CalculateNbv)
             eef_poses = PoseArray()
@@ -183,6 +184,7 @@ class GraspDataCollection:
             print res
             for p in res.nbv_poses.poses:
                 self.top_ranked_nbvs.append(p)
+            
             # self.nbv_tf = res.nbv
             self.grasp_eef_pose_to_achieve_nbv.header.frame_id = "world"
             # just take the best one for simplicity
@@ -225,7 +227,7 @@ class GraspDataCollection:
         E_T_C_t = tf.transformations.translation_matrix(E_T_C[0])
         E_T_C_r = tf.transformations.quaternion_matrix(E_T_C[1])
         E_T_C_m = np.dot(E_T_C_t, E_T_C_r)
-        # print 'E_T_C_m\n', E_T_C_m
+        print 'E_T_C_m\n', E_T_C_m
 
         # C_T_L
         C_T_L = TransformStamped()
@@ -238,11 +240,13 @@ class GraspDataCollection:
         # N_T_O = self.tf_listener.lookupTransform(
         #     "/" + self.orig_obj, "/" + self.nbv, rospy.Time(0))
         N_T_O = self.convertPoseMsgToTf(self.top_ranked_nbvs[rank])
+        print "Raw N_T_O", N_T_O
+        # N_T_O = ([0,0,0],[0.2618,0.319, -0.5778, 0.704]) # debugging! HACK!
         N_T_O_t = tf.transformations.translation_matrix(N_T_O[0])
         N_T_O_r = tf.transformations.quaternion_matrix(N_T_O[1])
         # N_T_O_r = tf.transformations.quaternion_matrix([0, 0, 0, 1])
         N_T_O_m = np.dot(N_T_O_t, N_T_O_r)
-        # print 'N_T_O_m\n', N_T_O_m
+        print 'N_T_O_m\n', N_T_O_m
 
         # # C_T_L = C_T_P * P_T_L
         # prime
@@ -260,9 +264,12 @@ class GraspDataCollection:
 
         # alternative:
         C_T_P_t = tf.transformations.translation_matrix([0, 0, 0, 1])
-        C_T_P_r = tf.transformations.quaternion_matrix(N_T_O[1])
+        # C_T_P_r1 = tf.transformations.quaternion_matrix([0,0,1,0])
+        C_T_P_r = tf.transformations.inverse_matrix(tf.transformations.quaternion_matrix(N_T_O[1]))
+        # C_T_P_r = np.dot(C_T_P_r1, C_T_P_r2)
+        print 'C_T_P_r', C_T_P_r
         C_T_P_m = np.dot(C_T_P_t, C_T_P_r)
-        # print 'C_T_P_m\n', C_T_P_m
+        print 'C_T_P_m\n', C_T_P_m
 
         P_T_L_t = tf.transformations.translation_matrix([0.0, 0, 0.3, 1.0])
         P_T_L_r = [[0, math.cos(angle), math.sin(angle), 0], [0, math.sin(
@@ -270,9 +277,9 @@ class GraspDataCollection:
         # P_T_L_r = tf.transformations.quaternion_matrix(
         #     [-0.5, -0.5, 0.5, -0.5])  # point nbv x axis towards camera
         P_T_L_m = np.dot(P_T_L_t, P_T_L_r)
-        # print 'P_T_L_m\n', P_T_L_m
+        print 'P_T_L_m\n', P_T_L_m
         C_T_L_m = np.dot(P_T_L_m, C_T_P_m)
-        # print 'C_T_L_m\n', C_T_L_m
+        print 'C_T_L_m\n', C_T_L_m
         # end alternative
 
         # L_T_O
@@ -300,7 +307,7 @@ class GraspDataCollection:
 
         # E_T_W
         L_T_W_m = np.dot(O_T_W_m, L_T_O_m)
-        # print 'L_T_W_m\n', L_T_W_m
+        print 'L_T_W_m\n', L_T_W_m
         C_T_W_m = np.dot(L_T_W_m, C_T_L_m)
         C_T_W_t = tf.transformations.translation_from_matrix(C_T_W_m)
         C_T_W_r = tf.transformations.quaternion_from_matrix(C_T_W_m)
@@ -314,7 +321,7 @@ class GraspDataCollection:
         self.tf_broadcaster.sendTransform(
             E_T_W_t, E_T_W_r, rospy.Time.now(), 'pres_eef', 'world')
 
-        # print 'E_T_W_m\n', E_T_W_m
+        print 'E_T_W_m\n', E_T_W_m
 
         ps = PoseStamped()
         ps.header.frame_id = "/" + self.reference_frame
@@ -407,7 +414,7 @@ class GraspDataCollection:
         try:
             req = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState)
             res = req(self.object_name, '')
-            print res.success
+            # print res.success
             height = res.pose.position.z
             # if self.verbose:
             # print 'Height: ', height
@@ -416,7 +423,7 @@ class GraspDataCollection:
         return height
 
     def move_object_to_pose_magically(self, pose, offset=False):
-        print "moving object to: \n", pose
+        # print "moving object to: \n", pose
         if offset:
             pose.pose.position.z = pose.pose.position.z - 0.02
         
@@ -464,19 +471,19 @@ class GraspDataCollection:
             if not phase == 'present':
                 ik.pose_stamped.pose.position.z = self.get_object_height() + self.hand_height_offset + \
                     self.offset_by_phase[phase]  # 0.24 self.hand_height_offsetgood 0.4
-            print 'Aiming for eef height: ', ik.pose_stamped.pose.position.z
+            # print 'Aiming for eef height: ', ik.pose_stamped.pose.position.z
             ik.timeout.secs = 3.0  # [s]
             ik.attempts = 1
             # print '\nIK message:', ik
             res = req(ik)
             outcome = res.error_code.val
-            print 'ik result, to help to debug finger angle', res
+            # print 'ik result, to help to debug finger angle', res
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
         js = {}
         for name, val in zip(res.solution.joint_state.name, res.solution.joint_state.position):
             js[name] = val
-        print 'joint states requested by ik:\n', js
+        # print 'joint states requested by ik:\n', js
         return js, outcome
 
     def load_joint_properties(self):
@@ -645,20 +652,20 @@ class GraspDataCollection:
         names = []
         vals = []
         js = self.get_joint_states()
-        print "js in move from grasp to raised", js
+        # print "js in move from grasp to raised", js
         for name, val in js.items():
             if name not in self.joints_to_exclude:
                 names.append(name)
                 vals.append(val)
         start_state.joint_state.name = names
         start_state.joint_state.position = vals
-        print 'start state in move from grasp to raised\n', start_state
+        # print 'start state in move from grasp to raised\n', start_state
         group_name = self.planning_group_name
         link_name = self.palm_link_eef
         wp_start = self.get_eef_pose()
-        print 'in move from grasp to raised, wp_start, eef_pose:\n', wp_start
+        # print 'in move from grasp to raised, wp_start, eef_pose:\n', wp_start
         wp_end = self.get_eef_pose()
-        print 'in move from grasp to raised, wp_end, eef_pose:\n', wp_end
+        # print 'in move from grasp to raised, wp_end, eef_pose:\n', wp_end
         wp_end.pose.position.z = 1.2
         print 'height wp end: ', wp_end.pose.position.z
         waypoints = [wp_start.pose, wp_end.pose]
@@ -673,7 +680,7 @@ class GraspDataCollection:
             res = req(header, start_state, group_name, link_name, waypoints,
                       max_step, jump_threshold, avoid_collisions, path_constraints)
             traj = res.solution
-            print 'move from grasp to raised result of compute cart path:\n', res
+            # print 'move from grasp to raised result of compute cart path:\n', res
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
 
@@ -754,7 +761,7 @@ class GraspDataCollection:
 
     def save_joint_states_at_pre(self):
         self.joint_states_at_pre = self.get_joint_states()
-        print 'joint states at pre\n', self.joint_states_at_pre
+        # print 'joint states at pre\n', self.joint_states_at_pre
 
         # self.tf_listener.waitForTransform("/" + self.reference_frame, "/" + self.palm_link_eef, rospy.Time(0), rospy.Duration(4.0))
         # tf = self.tf_listener.lookupTransform("/" + self.reference_frame, "/" + self.palm_link_eef, rospy.Time(0))
@@ -778,7 +785,7 @@ class GraspDataCollection:
 
     def save_joint_states_at_raised(self):
         self.joint_states_at_raised = self.get_joint_states()
-        print 'joint states at raised\n', self.joint_states_at_raised
+        # print 'joint states at raised\n', self.joint_states_at_raised
 
     def save_current_eef_pose(self, phase):
         while self.save_current_eef_pose_pub.get_num_connections() < 1:
@@ -1205,6 +1212,7 @@ def main(args):
         raw_input("Press to do nbv kinematic calcs")
         for rank in range(gdc.num_nbvs_to_request):
             for angle in gdc.present_roll_angle_options:
+                print "Rank, angle: ", rank, angle
                 js, outcome, obj_present_tf, obj_orig_tf = gdc.generate_nbv_pose(angle, rank)
                 if outcome == 1:
                     raw_input("press to move to raised")
@@ -1228,8 +1236,8 @@ def main(args):
                 continue
             break
         gdc.evaluate_against_gt()
-        gdc.move_to_state(gdc.joint_states_at_raised)
-        # gdc.return_arm_home()
+        # gdc.move_to_state(gdc.joint_states_at_raised)
+        gdc.return_arm_home()
         gdc.increment_current_trial_no()
         count += 1
 
