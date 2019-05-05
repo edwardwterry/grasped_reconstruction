@@ -33,6 +33,7 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from moveit_msgs.msg import GripperTranslation
 from moveit_msgs.msg import PickupAction, PickupActionGoal, PickupGoal
 from actionlib_msgs.msg import GoalID
+from std_srvs.srv import Empty
 import math
 import pickle
 import os
@@ -60,8 +61,8 @@ class GraspDataCollection:
         self.pre_grasp_height = 1.3
         self.post_grasp_height = 1.3
         self.lift_height = 1.3
-        self.joint_angle_tolerance = 0.05
-        self.hand_height_offset = 0.25  # 0.18 for cube, 0.20? for objects
+        self.joint_angle_tolerance = 0.01 # was 0.005
+        self.hand_height_offset = 0.26  # 0.18 for cube, 0.20? for objects
         self.reference_frame = 'world'
         self.model_name = 'jaco_on_table'
         self.palm_link = 'jaco_fingers_base_link'
@@ -289,16 +290,21 @@ class GraspDataCollection:
             "/" + self.reference_frame, "/" + self.orig_obj, rospy.Time(0), rospy.Duration(3.0))
         O_T_W = self.tf_listener.lookupTransform(
             "/" + self.reference_frame, "/" + self.orig_obj, rospy.Time(0))
+        # print 'O_T_W\n', O_T_W
         O_T_W_t = tf.transformations.translation_matrix(O_T_W[0])
         O_T_W_r = tf.transformations.quaternion_matrix(O_T_W[1])
         O_T_W_m = np.dot(O_T_W_t, O_T_W_r)
+        O_T_W_t2 = tf.transformations.translation_from_matrix(O_T_W_m)
+        O_T_W_r2 = tf.transformations.quaternion_from_matrix(O_T_W_m)
         # print 'O_T_W_m\n', O_T_W_m
 
         # E_T_W
         L_T_W_m = np.dot(O_T_W_m, L_T_O_m)
         # print 'L_T_W_m\n', L_T_W_m
         C_T_W_m = np.dot(L_T_W_m, C_T_L_m)
-        # print 'C_T_W_m\n', C_T_W_m
+        C_T_W_t = tf.transformations.translation_from_matrix(C_T_W_m)
+        C_T_W_r = tf.transformations.quaternion_from_matrix(C_T_W_m)
+        print 'C_T_W_m\n', C_T_W_m
         E_T_W_m = np.dot(C_T_W_m, E_T_C_m)
         E_T_W_t = tf.transformations.translation_from_matrix(E_T_W_m)
         # E_T_W_r = tf.transformations.quaternion_from_matrix([[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]])
@@ -320,7 +326,28 @@ class GraspDataCollection:
         ps.pose.orientation.z = E_T_W_r[2]  # 0.60627 #E_T_W_r[2]
         ps.pose.orientation.w = E_T_W_r[3]  # 0.48251 #E_T_W_r[3]
         js, outcome = self.get_ik('present', ps)
-        return js, outcome
+
+        obj_present_tf = PoseStamped()
+        obj_present_tf.header.frame_id = "/" + self.reference_frame
+        obj_present_tf.pose.position.x = C_T_W_t[0]  # .32455 # E_T_W_t[0]
+        obj_present_tf.pose.position.y = C_T_W_t[1]  # 0.10394 # E_T_W_t[1]
+        obj_present_tf.pose.position.z = C_T_W_t[2]  # 1.0798 # E_T_W_t[2]
+        obj_present_tf.pose.orientation.x = C_T_W_r[0]  # -0.541971 #E_T_W_r[0]
+        obj_present_tf.pose.orientation.y = C_T_W_r[1]  # 0.32541 #E_T_W_r[1]
+        obj_present_tf.pose.orientation.z = C_T_W_r[2]  # 0.60627 #E_T_W_r[2]
+        obj_present_tf.pose.orientation.w = C_T_W_r[3]  # 0.48251 #E_T_W_r[3]
+
+        obj_orig_tf = PoseStamped()
+        obj_orig_tf.header.frame_id = "/" + self.reference_frame
+        obj_orig_tf.pose.position.x = O_T_W_t2[0]  # .32455 # E_T_W_t[0]
+        obj_orig_tf.pose.position.y = O_T_W_t2[1]  # 0.10394 # E_T_W_t[1]
+        obj_orig_tf.pose.position.z = O_T_W_t2[2]  # 1.0798 # E_T_W_t[2]
+        obj_orig_tf.pose.orientation.x = O_T_W_r2[0]  # -0.541971 #E_T_W_r[0]
+        obj_orig_tf.pose.orientation.y = O_T_W_r2[1]  # 0.32541 #E_T_W_r[1]
+        obj_orig_tf.pose.orientation.z = O_T_W_r2[2]  # 0.60627 #E_T_W_r[2]
+        obj_orig_tf.pose.orientation.w = O_T_W_r2[3]  # 0.48251 #E_T_W_r[3]     
+        print 'orig obj tf\n', obj_orig_tf   
+        return js, outcome, obj_present_tf, obj_orig_tf
 
     def hm_clbk(self, msg):
         try:
@@ -388,17 +415,17 @@ class GraspDataCollection:
             print "Service call failed: %s" % e
         return height
 
-    def position_object(self):
-        if self.verbose:
-            print 'Positioning object'
+    def move_object_to_pose_magically(self, pose, offset=False):
+        print "moving object to: \n", pose
+        if offset:
+            pose.pose.position.z = pose.pose.position.z - 0.02
+        
         rospy.wait_for_service('/gazebo/set_model_state')
         try:
             req = rospy.ServiceProxy('/gazebo/set_model_state', SetModelState)
             ms = ModelState()
             ms.model_name = self.object_name
-            ms.pose.position.x = self.object_position[0]
-            ms.pose.position.y = self.object_position[1]
-            ms.pose.position.z = self.object_position[2]
+            ms.pose = pose.pose
             ms.reference_frame = self.reference_frame
             res = req(ms)
         except rospy.ServiceException, e:
@@ -516,9 +543,9 @@ class GraspDataCollection:
         aco.object.id = self.object_name
         for finger in self.finger_links_allowed_to_touch:
             aco.touch_links.append(finger)
-        print 'attached collision object\n', aco
+        # print 'attached collision object\n', aco
         # supplement
-        print 'joint states inside move_to_state, just before motion plan req\n', joint_states
+        # print 'joint states inside move_to_state, just before motion plan req\n', joint_states
         for name, val in joint_states.items():
             if name not in self.joints_to_exclude:
                 jc = JointConstraint()
@@ -531,8 +558,9 @@ class GraspDataCollection:
         mpr.start_state.attached_collision_objects.append(aco)
         mpr.goal_constraints = [con]
         mpr.group_name = self.planning_group_name
+        mpr.num_planning_attempts = 10
         mpr.allowed_planning_time = 3.0  # [s]
-        print 'mpr in move_to_state\n', mpr
+        # print 'mpr in move_to_state\n', mpr
         try:
             req = rospy.ServiceProxy(
                 '/plan_kinematic_path', GetMotionPlan)
@@ -754,10 +782,12 @@ class GraspDataCollection:
 
     def save_current_eef_pose(self, phase):
         while self.save_current_eef_pose_pub.get_num_connections() < 1:
+            print 'waiting for eef save connections'
             pass
         msg = String()
         msg.data = phase
         self.save_current_eef_pose_pub.publish(msg)
+        print 'Saved eef pose at', phase
 
     def save(self, height_map, ik_pre, height):
         if self.verbose:
@@ -767,13 +797,14 @@ class GraspDataCollection:
         np.savez('output', height_map=height_map, height=height)
 
     def capture_and_process_observation(self):
+        print "Capture and process obs"
         try:
             req = rospy.ServiceProxy(
                 '/capture_and_process_observation', CaptureAndProcessObservation)
-            msg = Int32()
-            msg.data = 1
+            msg = Bool()
+            msg.data = True
             res = req(msg)
-            # print res
+            print 'capture and process response:', res
         except rospy.ServiceException, e:
             print "Service call failed: %s" % e
 
@@ -976,7 +1007,7 @@ class GraspDataCollection:
         # print [x for x in probs_descending[:self.num_grasp_candidates_to_generate]]
         # return [x[1] for x in probs_descending[:self.num_grasp_candidates_to_generate]]
         # UNCOMMENT THIS FOR FULL HEIGHT MAP READING
-        mps = [(0.23, 0.06), (0.17, 0.06)] # for levels 2-4
+        mps = [(0.23, 0.06), (0.17, 0.06)]  # for levels 2-4
         # mps = [(0.23, 0.0), (0.17, 0.0)]  # for level 1
         dummy = self.stand_in_coord_and_angle_to_eef_pose(mps[count], 0)
         return [dummy]
@@ -990,9 +1021,17 @@ class GraspDataCollection:
             msg = Bool()
             msg.data = True
             res = req(msg)
-            print res
+            # print res
         except rospy.ServiceException, e:
-            print "Service call failed: %s" % e        
+            print "Service call failed: %s" % e
+        # create confusion matrix here with proportions
+        conf = np.asarray([[res.GT_OCC_EST_OCC.data, res.GT_OCC_EST_FREE.data, res.GT_OCC_EST_UNOBS.data],
+                           [res.GT_FREE_EST_OCC.data, res.GT_FREE_EST_FREE.data,
+                               res.GT_FREE_EST_UNOBS.data],
+                           [res.GT_UNOBS_EST_OCC.data, res.GT_UNOBS_EST_FREE.data, res.GT_UNOBS_EST_UNOBS.data]])
+        sum_conf = np.sum(conf)
+        conf = np.true_divide(conf, sum_conf)
+        print "Confusion matrix:\n", conf
 
     def manage_collision_matrix(self):
         allowed_collision_elements = ['jaco_6_hand_limb', 'jaco_7_finger_mount_index', 'jaco_7_finger_mount_pinkie', 'jaco_7_finger_mount_thumb',
@@ -1022,7 +1061,8 @@ class GraspDataCollection:
             print "Service call failed: %s" % e
 
         try:
-            req = rospy.ServiceProxy('/apply_planning_scene', ApplyPlanningScene)
+            req = rospy.ServiceProxy(
+                '/apply_planning_scene', ApplyPlanningScene)
             ps = scene
             ps.is_diff = True
             ps.allowed_collision_matrix.entry_values[index].enabled[0] = True
@@ -1047,6 +1087,24 @@ class GraspDataCollection:
         # print 'should be a renewed js with better finger joint angles\n', js
         return js_renewed
 
+    def change_physics(self, action):
+        # msg = Empty()
+        if action == 'pause':
+            try:
+                req = rospy.ServiceProxy('/gazebo/pause_physics', Empty)
+                res = req()
+                print "physics off"
+                # print res
+            except rospy.ServiceException, e:
+                print "Service call failed: %s" % e            
+        elif action == 'unpause':
+            try:
+                req = rospy.ServiceProxy('/gazebo/unpause_physics', Empty)
+                res = req()
+                print "physics on"
+            except rospy.ServiceException, e:
+                print "Service call failed: %s" % e                     
+
 
 def main(args):
     rospy.init_node('grasp_data_collection')
@@ -1059,77 +1117,120 @@ def main(args):
     #     rospy.sleep(0.5)
     midpoints = gdc.generateSampleMidpoints()
     angles = gdc.generateSampleAngles()
-    # # quit()
+    # gdc.change_physics('unpause')
+    # quit()
     count = 0
 
-    gdc.evaluate_against_gt()
     # ### UNCOMMENT TO RETURN TO NORMAL
     # gdc.manage_collision_matrix()
-    quit()
     # do the actual sequence
+    # THIS BLOCK DOES THE ACTUAL ARM MOVING
+    # while gdc.current_trial_no < gdc.total_num_trials:
+    #     # gdc.save_eef_pose_at_grasp()
+    #     # gdc.position_object()
+    #     # height_map = gdc.height_map  # TODO make not None
+    #     # gdc.pickup()
+    #     # gdc.execute_grasp_action('open')
+    #     candidate_grasps = gdc.generate_grasp_pose_candidates(
+    #         midpoints, angles, count)
+    #     print candidate_grasps
+    #     gdc.get_nbvs_and_grasp_poses(candidate_grasps)
+    #     js_pre, _ = gdc.get_ik('pre')
+    #     raw_input("Press to move to pre")
+    #     gdc.move_to_state(js_pre)
+    #     gdc.save_joint_states_at_pre()
+    #     # gdc.eef_tf_save_request()
+    #     # rospy.sleep(2)
+    #     raw_input("Press to move to grasp")
+    #     gdc.move_from_pregrasp_to_grasp(False)
+    #     gdc.save_current_eef_pose('grasp')
+    #     # gdc.save_finger_joint_states_at_grasp()
+    #     # raw_input("press any key to move back")
+    #     # rospy.sleep(2)
+    #     gdc.actuate_fingers('close')
+    #     raw_input("Press to move to raised")
+    #     gdc.move_from_grasp_to_raised()
+    #     gdc.save_joint_states_at_raised()
+    #     # raw_input("Press to try to close fingers again")
+    #     # gdc.actuate_fingers('close')
+    #     # gdc.move_to_state(gdc.generate_joint_states_presentation_pose())
+    #     raw_input("Press to do nbv kinematic calcs")
+    #     for rank in range(gdc.num_nbvs_to_request):
+    #         for angle in gdc.present_roll_angle_options:
+    #             js, outcome = gdc.generate_nbv_pose(angle, rank)
+    #             if outcome == 1:
+    #                 # gdc.supplement_with_correct_finger_joint_angles(js)
+    #                 # print 'should be a renewed js with better finger joint angles\n', js
+    #                 raw_input("press to move to nbv")
+    #                 gdc.move_to_state(js)
+    #                 break
+    #         # https://stackoverflow.com/questions/189645/how-to-break-out-of-multiple-loops-in-python
+    #         else:
+    #             continue
+    #         break
+    #     gdc.save_current_eef_pose('present')
+    #     gdc.capture_and_process_observation()
+    #     raw_input("press any key to move back")
+    #     rospy.sleep(2)
+    #     gdc.move_to_state(gdc.joint_states_at_raised)
+    #     rospy.sleep(2)
+    #     gdc.move_from_preplace_to_place()
+    #     gdc.save_current_eef_pose('place')
+    #     rospy.sleep(2)
+    #     # gdc.move_to_state(gdc.joint_states_at_grasp)
+    #     # gdc.move_from_pregrasp_to_grasp(False)
+    #     # gdc.move_to_state(gdc.get_ik('pre'))
+    #     # gdc.move_from_pregrasp_to_grasp(True)
+    #     gdc.actuate_fingers('open')
+    #     gdc.move_from_grasp_to_raised()
+    #     # height = gdc.get_object_height()
+    #     # gdc.execute_grasp_action('open')
+    #     # gdc.save(height_map, ik_pre, height)
+    #     gdc.increment_current_trial_no()
+    #     gdc.return_arm_home()
+    # THIS BLOCK DOES THE ACTUAL ARM MOVING /END
+
     while gdc.current_trial_no < gdc.total_num_trials:
-        # gdc.save_eef_pose_at_grasp()
-        # gdc.position_object()
-        # height_map = gdc.height_map  # TODO make not None
-        # gdc.pickup()
-        # gdc.execute_grasp_action('open')
         candidate_grasps = gdc.generate_grasp_pose_candidates(
             midpoints, angles, count)
-        print candidate_grasps
+        raw_input("Press to calculate nbv")
         gdc.get_nbvs_and_grasp_poses(candidate_grasps)
         js_pre, _ = gdc.get_ik('pre')
         raw_input("Press to move to pre")
         gdc.move_to_state(js_pre)
-        gdc.save_joint_states_at_pre()
-        # gdc.eef_tf_save_request()
-        # rospy.sleep(2)
         raw_input("Press to move to grasp")
         gdc.move_from_pregrasp_to_grasp(False)
         gdc.save_current_eef_pose('grasp')
-        # gdc.save_finger_joint_states_at_grasp()
-        # raw_input("press any key to move back")
-        # rospy.sleep(2)
-        gdc.actuate_fingers('close')
-        raw_input("Press to move to raised")
-        gdc.move_from_grasp_to_raised()
-        gdc.save_joint_states_at_raised()
-        # raw_input("Press to try to close fingers again")
-        # gdc.actuate_fingers('close')
-        # gdc.move_to_state(gdc.generate_joint_states_presentation_pose())
+        # rospy.sleep(5)
         raw_input("Press to do nbv kinematic calcs")
         for rank in range(gdc.num_nbvs_to_request):
             for angle in gdc.present_roll_angle_options:
-                js, outcome = gdc.generate_nbv_pose(angle, rank)
+                js, outcome, obj_present_tf, obj_orig_tf = gdc.generate_nbv_pose(angle, rank)
                 if outcome == 1:
-                    # gdc.supplement_with_correct_finger_joint_angles(js)
-                    # print 'should be a renewed js with better finger joint angles\n', js
+                    raw_input("press to move to raised")
+                    gdc.move_from_grasp_to_raised()
+                    gdc.save_joint_states_at_raised()
                     raw_input("press to move to nbv")
                     gdc.move_to_state(js)
+                    gdc.save_current_eef_pose('present')
+                    # rospy.sleep(2)
+                    # gdc.change_physics('pause')
+                    raw_input("press to teleport up")
+                    gdc.move_object_to_pose_magically(obj_present_tf)                    
+                    raw_input("press to process")
+                    gdc.capture_and_process_observation()
+                    raw_input("press to teleport down")
+                    gdc.move_object_to_pose_magically(obj_orig_tf, offset=True)
+                    # gdc.change_physics('unpause')
                     break
             # https://stackoverflow.com/questions/189645/how-to-break-out-of-multiple-loops-in-python
             else:
                 continue
             break
-        gdc.save_current_eef_pose('present')
-        gdc.capture_and_process_observation()
-        raw_input("press any key to move back")
-        rospy.sleep(2)
+        gdc.evaluate_against_gt()
         gdc.move_to_state(gdc.joint_states_at_raised)
-        rospy.sleep(2)
-        gdc.move_from_preplace_to_place()
-        gdc.save_current_eef_pose('place')
-        rospy.sleep(2)
-        # gdc.move_to_state(gdc.joint_states_at_grasp)
-        # gdc.move_from_pregrasp_to_grasp(False)
-        # gdc.move_to_state(gdc.get_ik('pre'))
-        # gdc.move_from_pregrasp_to_grasp(True)
-        gdc.actuate_fingers('open')
-        gdc.move_from_grasp_to_raised()
-        # height = gdc.get_object_height()
-        # gdc.execute_grasp_action('open')
-        # gdc.save(height_map, ik_pre, height)
+        # gdc.return_arm_home()
         gdc.increment_current_trial_no()
-        gdc.return_arm_home()
         count += 1
 
         # rospy.spin()

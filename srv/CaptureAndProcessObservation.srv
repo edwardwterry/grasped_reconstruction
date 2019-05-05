@@ -1,3 +1,3 @@
-std_msgs/Int32 grasp_id
+std_msgs/Bool trigger
 ---
 std_msgs/Bool result

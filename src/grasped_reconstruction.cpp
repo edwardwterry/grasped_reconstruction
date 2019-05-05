@@ -52,7 +52,7 @@ public:
   image_transport::Publisher hm_im_pub, hm_vg_im_pub, hm_vg_mask_im_pub;
   tf::TransformListener listener;
   tf::TransformBroadcaster broadcaster;
-  std::unordered_map<std::string, tf::StampedTransform> eef_pose_keyframes;
+  std::unordered_map<std::string, tf::StampedTransform> eef_pose_keyframes_;
   tf::StampedTransform origobj_T_w_, origbb_T_w_, l_T_w_;
   tf2_ros::StaticTransformBroadcaster static_broadcaster;
   int rMax, rMin, gMax, gMin, bMax, bMin;
@@ -62,7 +62,7 @@ public:
   bool orig_unobserved_set_ = false;
   int NUM_AZIMUTH_POINTS = 6;
   int NUM_ELEVATION_POINTS = 4;
-  float VIEW_RADIUS = 0.2f;
+  float VIEW_RADIUS = 0.35f;
   float TABLETOP_HEIGHT = 0.735f;
   float P_OCC = 0.99f;
   float P_UNOBS = 0.5f;
@@ -81,7 +81,8 @@ public:
   float hm_xmin_, hm_xmax_, hm_ymin_, hm_ymax_;
   int im_nr_, im_nc_;
   cv::Mat height_map_, height_map_mask_;
-  std::vector<PointCloud> gt_convex_hull_points_;
+  std::vector<std::set<int>> finger_occluded_voxels_by_grasp_id_;
+
   enum Observation
   {
     OCCUPIED,
@@ -178,7 +179,7 @@ public:
     hm_vg_mask_im_pub.publish(img_msg); // ros::Publisher pub_img = node.advertise<sensor_msgs::Image>("topic", queuesize);
   }
 
-  void get_hm_image_bounds(const float border)
+  void get_hm_image_bounds(const float &border)
   {
     int num_border_padding_cells_x = border / leaf_size_[0];
     int num_border_padding_cells_y = border / leaf_size_[1];
@@ -191,7 +192,7 @@ public:
     std::cout << "hm bounds: " << hm_xmin_ << " " << hm_xmax_ << " " << hm_ymin_ << " " << hm_ymax_ << " " << im_nr_ << " " << im_nc_ << std::endl;
   }
 
-  void hm_voxel_grid_global_to_rc(const float x, const float y, int im_r, int im_c)
+  void hm_voxel_grid_global_to_rc(const float &x, const float &y, int &im_r, int &im_c)
   {
     std::cout << "hm bounds: " << x << " " << y << " " << leaf_size_[0] << std::endl;
     std::cout << "hm bounds: " << hm_xmin_ << " " << hm_xmax_ << " " << hm_ymin_ << " " << hm_ymax_ << std::endl;
@@ -203,16 +204,17 @@ public:
 
   bool evaluateOccupancyGridAgainstGroundTruth(grasped_reconstruction::GTEval::Request &req, grasped_reconstruction::GTEval::Response &res)
   {
-    std::cout<<"Received service call!"<<std::endl;
+    std::cout << "Received service call!" << std::endl;
     Eigen::MatrixXi conf = Eigen::MatrixXi::Zero(3, 3);
     for (size_t i = 0; i < num_voxels_; ++i)
     {
       int gt_state = cell_occupancy_state_gt_.find(i)->second;
       int est_state = cell_occupancy_state_.find(i)->second;
       // std::cout<<"i ig est: "<<i<<" "<<gt_state<<" "<<est_state<<std::endl;
-      conf(gt_state, est_state)++;// = conf(gt_state, est_state) + 1;
+      conf(gt_state, est_state)++; // = conf(gt_state, est_state) + 1;
     }
-    std::cout<<"conf matrix: \n"<<conf.matrix()<<std::endl;
+    std::cout << "conf matrix: \n"
+              << conf.matrix() << std::endl;
     res.GT_OCC_EST_OCC.data = conf(Observation::OCCUPIED, Observation::OCCUPIED);
     res.GT_OCC_EST_FREE.data = conf(Observation::OCCUPIED, Observation::FREE);
     res.GT_OCC_EST_UNOBS.data = conf(Observation::OCCUPIED, Observation::UNOBSERVED);
@@ -227,7 +229,7 @@ public:
 
   void setVolumetricGroundTruthClbk(const geometry_msgs::PoseArray &msg)
   {
-    std::cout<<"Received gt clbk message!"<<std::endl;
+    std::cout << "Received gt clbk message!" << std::endl;
     pcl::CropHull<pcl::PointXYZ> cropHullFilter;
     boost::shared_ptr<PointCloud> hullCloud(new PointCloud());
     for (const auto &p : msg.poses)
@@ -242,7 +244,7 @@ public:
             pc_prim.push_back(pcl::PointXYZ(origobj_T_w_.getOrigin().x() + p.position.x + i * p.orientation.x,
                                             origobj_T_w_.getOrigin().y() + p.position.y + j * p.orientation.y,
                                             origobj_T_w_.getOrigin().z() + p.position.z + k * p.orientation.z));
-            std::cout<<"new point: "<<pc_prim.back()<<std::endl;
+            std::cout << "new point: " << pc_prim.back() << std::endl;
           }
         }
       }
@@ -286,14 +288,22 @@ public:
     }
   }
 
+  // bool captureAndProcessObservation(grasped_reconstruction::CaptureAndProcessObservation::Request &req, grasped_reconstruction::CaptureAndProcessObservation::Response &res)
+  // {
+  //   return true;
+  // }
+
   bool captureAndProcessObservation(grasped_reconstruction::CaptureAndProcessObservation::Request &req, grasped_reconstruction::CaptureAndProcessObservation::Response &res)
   {
+    // int grasp_id_selected = req.grasp_id.data;
+    std::set<int> finger_occluded_voxels_at_selected_grasp_id = finger_occluded_voxels_by_grasp_id_[0];
     sensor_msgs::PointCloud2Ptr msg_transformed(new sensor_msgs::PointCloud2());
     std::string target_frame("world");
+        // std::cout << "here0" << std::endl;
     pcl_ros::transformPointCloud(target_frame, *anytime_pc_, *msg_transformed, listener);
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>());
     pcl::fromROSMsg(*msg_transformed, *cloud);
-
+    // std::cout << "here1" << std::endl;
     pcl::ConditionAnd<pcl::PointXYZRGB>::Ptr color_cond(new pcl::ConditionAnd<pcl::PointXYZRGB>());
     if (nh_.hasParam("/rMax"))
     {
@@ -308,50 +318,22 @@ public:
     condrem.setCondition(color_cond);
     condrem.setInputCloud(cloud);
     condrem.setKeepOrganized(false);
+    // std::cout << "here2" << std::endl;
 
     // apply filter
     condrem.filter(*cloud);
 
-    /*if (eef_pose_keyframes.find("present") != eef_pose_keyframes.end() &&
-        eef_pose_keyframes.find("grasp") != eef_pose_keyframes.end())
-        {
-        {
-        sensor_msgs::PointCloud2Ptr output(new sensor_msgs::PointCloud2());
-        Eigen::Matrix4f p_T_w, g_T_w, w_T_p, w_T_g;
-        pcl_ros::transformAsMatrix(eef_pose_keyframes.find("present")->second,
-        p_T_w);
-        pcl_ros::transformAsMatrix(eef_pose_keyframes.find("grasp")->second,
-        g_T_w); std::cout << "\n p_T_w:\n" << (p_T_w).matrix() << std::endl;
-        std::cout << "\n g_T_w:\n" << (g_T_w).matrix() << std::endl; w_T_p =
-        Eigen::Matrix4f::Identity(); w_T_p.block(0, 0, 3, 3) = p_T_w.block(0, 0,
-        3, 3).transpose(); w_T_p.block(0, 3, 3, 1) = -p_T_w.block(0, 0, 3,
-        3).transpose() * p_T_w.block(0, 3, 3, 1); std::cout << "\n w_T_p:\n" <<
-        (w_T_p).matrix() << std::endl; std::cout << "\n homog matrix:\n" <<
-        (w_T_p * g_T_w).matrix() << std::endl;
-
-        for (auto it = cloud->begin(); it != cloud->end(); ++it)
-        {
-          Eigen::Matrix4f pt, tx; pt = Eigen::Matrix4f::Identity(); tx =
-          Eigen::Matrix4f::Identity(); pt(0, 3) = it->x; pt(1, 3) = it->y; pt(2,
-          3) = it->z; tx = (g_T_w * w_T_p) * pt; it->x = tx(0, 3); it->y = tx(1,
-          3); it->z = tx(2, 3);
-        }
-        sensor_msgs::PointCloud2Ptr cloud_in_smpc2(new
-        sensor_msgs::PointCloud2); pcl::toROSMsg(*cloud, *cloud_in_smpc2);
-        sensor_msgs::PointCloud2 cloud_out_smpc2;
-        pcl_ros::transformPointCloud(Eigen::Matrix4f::Identity(),
-        *cloud_in_smpc2, *output); output->header.frame_id = "world";
-        anytime_pub.publish(*output);
-        }
-    }*/
-
-    if (eef_pose_keyframes.find("present") != eef_pose_keyframes.end() && eef_pose_keyframes.find("grasp") != eef_pose_keyframes.end())
+    if (eef_pose_keyframes_.find("present") != eef_pose_keyframes_.end() && eef_pose_keyframes_.find("grasp") != eef_pose_keyframes_.end())
     {
+      // std::cout << "here3" << std::endl;
+
       {
         sensor_msgs::PointCloud2Ptr output(new sensor_msgs::PointCloud2());
         Eigen::Matrix4f p_T_w, g_T_w, w_T_p, w_T_g;
-        pcl_ros::transformAsMatrix(eef_pose_keyframes.find("present")->second, p_T_w);
-        pcl_ros::transformAsMatrix(eef_pose_keyframes.find("grasp")->second, g_T_w);
+        pcl_ros::transformAsMatrix(eef_pose_keyframes_.find("present")->second, p_T_w);
+        // std::cout << "here4" << std::endl;
+        pcl_ros::transformAsMatrix(eef_pose_keyframes_.find("grasp")->second, g_T_w);
+        // std::cout << "here5" << std::endl;
         // std::cout << "\n p_T_w:\n"
         //           << (p_T_w).matrix() << std::endl;
         // std::cout << "\n g_T_w:\n"
@@ -395,11 +377,13 @@ public:
         // move the ray shooting point to where the lens link would be wrt the orig_bb
         try
         {
-          ros::Time now = ros::Time::now();
+          // std::cout << "here6" << std::endl;
+          ros::Time now = ros::Time(0);
           listener.waitForTransform("/world", "/lens_link",
-                                    now, ros::Duration(3.0));
+                                    ros::Time(0), ros::Duration(3.0));
           listener.lookupTransform("/world", "/lens_link",
-                                   now, l_T_w_);
+                                   ros::Time(0), l_T_w_);
+          // std::cout << "here7" << std::endl;
         }
         catch (tf::TransformException ex)
         {
@@ -414,6 +398,7 @@ public:
         std::set<int> cell_visited;
         for (size_t i = 0; i < num_voxels_; i++) // for each point in voxel grid
         {
+          // std::cout << "here8" << std::endl;
           std::vector<Eigen::Vector3i> out_ray;
           Eigen::Vector3i target_voxel = voxelIndexToGridCoord(i);
           Eigen::Vector4f target_voxel_w = voxelIndexToWorldCoord(i);
@@ -431,7 +416,7 @@ public:
           {
             int index = gridCoordToVoxelIndex(out_ray[i]);
             // std::cout << "Grid coord: " << out_ray[i][0] << " " << out_ray[i][1]
-            // << " " << out_ray[i][2] << " Voxel index: " << index << " Current state: "<<apriori_cell_occupancy_state.find(index)->second<<std::endl;
+            //           << " " << out_ray[i][2] << " Voxel index: " << index << " Current state: " << apriori_cell_occupancy_state.find(index)->second << std::endl;
             auto it_cell = apriori_cell_occupancy_state.find(index);
             // auto it_visited = cell_visited.find(index);
 
@@ -448,47 +433,28 @@ public:
             }
             else
             {
-              // do occluded by finger check here first
-              if (it_cell->second == Observation::OCCUPIED)
+              if (finger_occluded_voxels_at_selected_grasp_id.find(it_cell->first) == finger_occluded_voxels_at_selected_grasp_id.end())
+              // if the voxel in question is NOT hidden by the fingers, an update is allowed to take place
               {
-                occupied_voxel_has_been_passed = true;
-                default_state = Observation::UNOBSERVED;
-                // std::cout<<"Default state switched to UNOBS for voxel "<<i<<std::endl;
-              }
-              // added
-              else
-              {
-                updateVoxelProbability(index, default_state);
+                if (it_cell->second == Observation::OCCUPIED)
+                {
+                  occupied_voxel_has_been_passed = true;
+                  default_state = Observation::UNOBSERVED;
+                  // std::cout << "Default state switched to UNOBS for voxel " << i << std::endl;
+                }
+                else
+                {
+                  updateVoxelProbability(index, default_state);
+                }
               }
             }
-            // if the index is in the set of voxels to be excluded coz they were occluded by the hand, don't perform any probability update
-            // }
           }
         }
-
-        // // do ray casting for other (free) voxels // TODO figure how to deal with occlusions from fingers!!!, i.e. don't consider as free
-        // std::cout << "\n\n UPDATE UNOBSERVED POINTS \n\n"
-        //           << std::endl;
-
-        // getIdsOfOccludedVoxels(*cloud, T, voxel_ids_corresponding_to_unobserved_points);
-        // for (const auto &v : voxel_ids_corresponding_to_unobserved_points)
-        // {
-        //   updateVoxelProbability(v, Observation::UNOBSERVED);
-        // }
-        // std::cout << "\n\n UPDATE FREE POINTS \n\n"
-        //           << std::endl;
-        // for (size_t i = 0; i < num_voxels_; ++i)
-        // {
-        //   if (voxel_ids_corresponding_to_observed_points.find(i) == voxel_ids_corresponding_to_observed_points.end() &&
-        //       voxel_ids_corresponding_to_unobserved_points.find(i) == voxel_ids_corresponding_to_observed_points.end())
-        //   {
-        //     updateVoxelProbability(i, Observation::FREE);
-        //   }
-        // }
       }
     }
     res.result.data = true;
     publishPointCloudByCategoryMarkerArray();
+    return true;
   }
 
   void publishPointCloudByCategoryMarkerArray()
@@ -731,7 +697,7 @@ public:
     std::cout << "Saving initial object pose" << std::endl;
     try
     {
-      ros::Time now = ros::Time::now();
+      ros::Time now = ros::Time(0);
       listener.waitForTransform("/world", object_frame_id_,
                                 now, ros::Duration(3.0));
       listener.lookupTransform("/world", object_frame_id_,
@@ -760,7 +726,7 @@ public:
     std::cout << "Saving initial bounding box" << std::endl;
     try
     {
-      ros::Time now = ros::Time::now();
+      ros::Time now = ros::Time(0);
       listener.waitForTransform("/world", "/orig_bb",
                                 now, ros::Duration(3.0));
       listener.lookupTransform("/world", "/orig_bb",
@@ -820,6 +786,7 @@ public:
 
   bool calculateNbv(grasped_reconstruction::CalculateNbv::Request &req, grasped_reconstruction::CalculateNbv::Response &res)
   {
+    finger_occluded_voxels_by_grasp_id_.clear();
     std::vector<float> view_entropies;
     std::vector<float> best_view_entropies;
     std::vector<std::vector<float>> all_view_entropies;
@@ -827,7 +794,6 @@ public:
     geometry_msgs::PoseStamped best_eef_pose;
     int best_view_id;
     std::set<int> finger_occluded_voxels;
-    std::vector<std::set<int>> finger_occluded_voxels_by_grasp_id;
     Eigen::Quaternionf best_view;
     int count = 0;
     for (auto it = req.eef_poses.poses.begin(); it != req.eef_poses.poses.end(); it++) // go through every candidate pose
@@ -836,7 +802,7 @@ public:
       ps.pose = *it;
       ps.header.frame_id = "/world";
       getVoxelIdsOccludedByFingers(ps, finger_occluded_voxels);
-      finger_occluded_voxels_by_grasp_id.push_back(finger_occluded_voxels);
+      finger_occluded_voxels_by_grasp_id_.push_back(finger_occluded_voxels);
       int best_view_id_per_pose;
       Eigen::Quaternionf best_view_per_pose = calculateNextBestView(finger_occluded_voxels, view_entropies, best_view_id_per_pose);
       all_view_entropies.push_back(view_entropies);
@@ -848,6 +814,7 @@ public:
         best_eef_pose = ps;
         best_view = best_view_per_pose;
         best_view_id = best_view_id_per_pose;
+        std::cout << "best view id: " << best_view_id << std::endl;
         best_view_entropies = view_entropies;
         highest_entropy = max_entropy;
       }
@@ -995,7 +962,7 @@ public:
     std::cout << "Saving open gripper configuration" << std::endl;
     try
     {
-      ros::Time now = ros::Time::now();
+      ros::Time now = ros::Time(0);
       listener.waitForTransform("/jaco_fingers_base_link", "/jaco_9_finger_thumb_tip",
                                 now, ros::Duration(3.0));
       listener.lookupTransform("/jaco_fingers_base_link", "/jaco_9_finger_thumb_tip",
@@ -1165,10 +1132,12 @@ public:
   {
     std::string phase = msg.data;
     tf::StampedTransform bb_bl;
+    std::cout << "here1" << std::endl;
 
     try
     {
-      ros::Time now = ros::Time::now();
+      std::cout << "here2" << std::endl;
+      ros::Time now = ros::Time(0);
       if (phase == "grasp")
       {
         geometry_msgs::TransformStamped static_transformStamped;
@@ -1190,10 +1159,12 @@ public:
       }
       else if (phase == "present")
       {
+        std::cout << "here3" << std::endl;
         listener.waitForTransform("/world", "/jaco_fingers_base_link",
-                                  now, ros::Duration(3.0));
+                                  ros::Time(0), ros::Duration(3.0));
         listener.lookupTransform("/world", "/jaco_fingers_base_link",
-                                 now, bb_bl);
+                                 ros::Time(0), bb_bl);
+        std::cout << "here4" << std::endl;
         geometry_msgs::TransformStamped static_transformStamped;
         static_transformStamped.header.stamp = ros::Time::now();
         static_transformStamped.header.frame_id = "world";
@@ -1205,6 +1176,7 @@ public:
         static_transformStamped.transform.rotation.y = bb_bl.getRotation()[1];
         static_transformStamped.transform.rotation.z = bb_bl.getRotation()[2];
         static_transformStamped.transform.rotation.w = bb_bl.getRotation()[3];
+        std::cout << "made it here" << std::endl;
         static_broadcaster.sendTransform(static_transformStamped);
       }
     }
@@ -1212,22 +1184,17 @@ public:
     {
       ROS_ERROR("%s", ex.what());
     }
-    auto it = eef_pose_keyframes.find(phase);
-    if (it == eef_pose_keyframes.end())
+    auto it = eef_pose_keyframes_.find(phase);
+    if (it == eef_pose_keyframes_.end())
     {
-      eef_pose_keyframes.insert(std::make_pair(phase, bb_bl));
+      eef_pose_keyframes_.insert(std::make_pair(phase, bb_bl));
+      std::cout << "Saving eef pose clbk: " << phase << std::endl;
     }
     else
     {
       it->second = bb_bl;
     }
-    // for (const auto &e : eef_pose_keyframes)
-    // {
-    //   std::cout << e.first << std::endl;
-    //   std::cout << e.second.getOrigin().getX() << " " << e.second.getOrigin().getY() << " " << e.second.getOrigin().getZ() << " " << std::endl;
-    //   std::cout << e.second.getRotation()[0] << " " << e.second.getRotation()[1] << " " << e.second.getRotation()[2] << " " << e.second.getRotation()[3] << std::endl;
-    //   // std::cout<<e.second.getRotation()<<std::endl;
-    // }
+    std::cout << "done saving pose" << std::endl;
   }
 
   void tabletopClbk(const sensor_msgs::PointCloud2ConstPtr &msg)
@@ -1613,7 +1580,7 @@ public:
     std::cout << "Appended and included point cloud with probabilities!" << std::endl;
   }
 
-  Eigen::Quaternionf calculateNextBestView(const std::set<int> &finger_occluded_voxels, std::vector<float> &view_entropies, int best_view_id)
+  Eigen::Quaternionf calculateNextBestView(const std::set<int> &finger_occluded_voxels, std::vector<float> &view_entropies, int &best_view_id)
   {
     std::cout << "Beginning calculation of next best view!" << std::endl;
     Eigen::Vector4f best_view;
@@ -1633,7 +1600,7 @@ public:
       }
       view_id++;
     }
-    std::cout << "Origin: " << best_view[0] << " " << best_view[1] << " " << best_view[2] << " Entropy: " << entropy << std::endl;
+    std::cout << "Origin: " << best_view[0] << " " << best_view[1] << " " << best_view[2] << " Entropy: " << entropy << "best id: " << best_view_id << std::endl;
     return nbv_orientations_[best_view_id];
   }
 
