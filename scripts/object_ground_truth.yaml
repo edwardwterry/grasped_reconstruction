@@ -1,7 +1,7 @@
 level1:
   - origin:
       x: 0
-      y: 0.06
+      y: 0.0
       z: 0.08
     size:
       x: 0.2

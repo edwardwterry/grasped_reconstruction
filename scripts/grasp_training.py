@@ -1269,21 +1269,33 @@ def main(args):
                 print "Rank, angle: ", rank, angle
                 js, outcome, obj_present_tf, obj_orig_tf = gdc.generate_nbv_pose(angle, rank)
                 if outcome == 1:
+                    # if gdc.mesh_name != 'level1':
                     raw_input("press to move to raised")
                     gdc.move_from_grasp_to_raised()
                     gdc.save_joint_states_at_raised()
                     raw_input("press to move to nbv")
                     gdc.move_to_state(js)
                     gdc.save_current_eef_pose('present')
-                    # rospy.sleep(2)
-                    # gdc.change_physics('pause')
                     raw_input("press to teleport up")
                     gdc.move_object_to_pose_magically(obj_present_tf)                    
                     raw_input("press to process")
                     gdc.capture_and_process_observation()
                     raw_input("press to teleport down")
                     gdc.move_object_to_pose_magically(obj_orig_tf, offset=True)
-                    # gdc.change_physics('unpause')
+                    # else:
+                    #     gdc.actuate_fingers('close')
+                    #     raw_input("press to move to raised")
+                    #     gdc.move_from_grasp_to_raised()
+                    #     gdc.save_joint_states_at_raised()
+                    #     raw_input("press to move to nbv")
+                    #     gdc.move_to_state(js)
+                    #     gdc.save_current_eef_pose('present')              
+                    #     raw_input("press to process")
+                    #     gdc.capture_and_process_observation()
+                    #     gdc.move_from_preplace_to_place()
+                    #     gdc.save_current_eef_pose('place')
+                    #     gdc.actuate_fingers('open')
+                    #     gdc.move_from_grasp_to_raised()
                     break
             # https://stackoverflow.com/questions/189645/how-to-break-out-of-multiple-loops-in-python
             else:

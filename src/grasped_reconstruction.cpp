@@ -29,6 +29,7 @@ public:
     cf_pub = n.advertise<sensor_msgs::PointCloud2>("color_filtered", 1);
     ch_points_pub = n.advertise<visualization_msgs::MarkerArray>("ch_points", 1);
     pc_by_category_pub = n.advertise<visualization_msgs::MarkerArray>("pc_by_category", 1);
+    pc_occupied_pub = n.advertise<visualization_msgs::MarkerArray>("pc_occupied", 1);
     image_transport::ImageTransport it(n);
     hm_im_pub = it.advertise("height_map_image", 1);
     hm_vg_im_pub = it.advertise("height_map_vg_image", 1);
@@ -47,7 +48,7 @@ public:
 
   ros::NodeHandle nh_;
   ros::Subscriber calc_observed_points_sub, gm_sub, calc_unobserved_points_sub, save_eef_pose_sub, pc_anytime_sub, color_sub, tabletop_sub, vol_gt_sub;
-  ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub, entropy_arrow_pub, nbv_pub, anytime_pub, ch_points_pub, ch_pub, pc_by_category_pub;
+  ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub, entropy_arrow_pub, nbv_pub, anytime_pub, ch_points_pub, ch_pub, pc_by_category_pub, pc_occupied_pub;
   ros::ServiceServer calculate_nbv_service_, capture_and_process_observation_service_, eval_gt_service_;
   image_transport::Publisher hm_im_pub, hm_vg_im_pub, hm_vg_mask_im_pub;
   tf::TransformListener listener;
@@ -455,6 +456,7 @@ public:
     }
     res.result.data = true;
     publishPointCloudByCategoryMarkerArray();
+    publishPointCloudOccupiedMarkerArray();
     return true;
   }
 
@@ -478,9 +480,9 @@ public:
       marker.pose.orientation.y = 0.0f;
       marker.pose.orientation.z = 0.0f;
       marker.pose.orientation.w = 1.0f;
-      marker.scale.x = 0.005;
-      marker.scale.y = 0.005;
-      marker.scale.z = 0.005;
+      marker.scale.x = LEAF_SIZE;
+      marker.scale.y = LEAF_SIZE;
+      marker.scale.z = LEAF_SIZE;
       int state = cell_occupancy_state_.find(i)->second;
       if (state == Observation::FREE)
       {
@@ -500,12 +502,49 @@ public:
         marker.color.g = 0.0f;
         marker.color.b = 0.0f;
       }
-      marker.color.a = 0.4; // Don't forget to set the alpha!
+      marker.color.a = 0.3; // Don't forget to set the alpha!
       // std::cout << "Index " << i << " with state " << state << " at: " << w[0] << " " << w[1] << " " << w[2] << std::endl;
 
       ma.markers.push_back(marker);
     }
     pc_by_category_pub.publish(ma);
+  }
+
+  void publishPointCloudOccupiedMarkerArray()
+  {
+    visualization_msgs::MarkerArray ma;
+    for (size_t i = 0; i < num_voxels_; ++i)
+    {
+      int state = cell_occupancy_state_.find(i)->second;
+      if (state == Observation::OCCUPIED)
+      {
+        visualization_msgs::Marker marker;
+        marker.header.frame_id = "world";
+        marker.header.stamp = ros::Time();
+        marker.id = i;
+        marker.type = visualization_msgs::Marker::CUBE;
+        marker.action = visualization_msgs::Marker::ADD;
+        Eigen::Vector4f w = voxelIndexToWorldCoord(i);
+        marker.pose.position.x = w[0];
+        marker.pose.position.y = w[1];
+        marker.pose.position.z = w[2];
+        // direction between view origin and object
+        marker.pose.orientation.x = 0.0f;
+        marker.pose.orientation.y = 0.0f;
+        marker.pose.orientation.z = 0.0f;
+        marker.pose.orientation.w = 1.0f;
+        marker.scale.x = LEAF_SIZE;
+        marker.scale.y = LEAF_SIZE;
+        marker.scale.z = LEAF_SIZE;
+        marker.color.r = 0.0f;
+        marker.color.g = 1.0f;
+        marker.color.b = 0.0f;
+        marker.color.a = 0.5; // Don't forget to set the alpha!
+
+        ma.markers.push_back(marker);
+      }
+    }
+    pc_occupied_pub.publish(ma);
   }
 
   void getVoxelIdsOfPointsAtPresent(const pcl::PointXYZRGB &pt, const Eigen::Matrix4f &T, std::set<int> &map)
@@ -1645,7 +1684,7 @@ public:
       }
       view_id++;
     }
-    std::cout<<"NBV calc took: "<<ros::Time::now() - start<<std::endl;
+    std::cout << "NBV calc took: " << ros::Time::now() - start << std::endl;
     std::cout << "Origin: " << best_view[0] << " " << best_view[1] << " " << best_view[2] << " Entropy: " << entropy << "best id: " << best_view_id << std::endl;
     return nbv_orientations_[best_view_id];
   }
