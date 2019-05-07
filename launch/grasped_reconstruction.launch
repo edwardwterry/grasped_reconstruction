@@ -10,6 +10,6 @@
        bMin: 0
        bMax: 255 -->
        object_frame_id: "/obj"
-       <!-- obj_mesh_name: "level2" -->
+       leaf_size: 0.015
       </rosparam>
 </launch>

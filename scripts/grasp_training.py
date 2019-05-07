@@ -50,7 +50,8 @@ np.set_printoptions(formatter={'float': lambda x: "{0:0.3f}".format(x)})
 
 
 class GraspDataCollection:
-    def __init__(self, verbosity):
+    def __init__(self, verbosity, mesh_name):
+        self.mesh_name = mesh_name
         self.verbose = verbosity
         self.bridge = CvBridge()
         self.total_num_trials = 5
@@ -68,6 +69,7 @@ class GraspDataCollection:
         self.palm_link = 'jaco_fingers_base_link'
         self.palm_link_eef = 'jaco_6_hand_limb'
         self.orig_bb = 'orig_bb'
+        self.orig_bb_ctr = 'orig_bb_ctr'
         self.orig_obj = 'orig_obj'
         self.eef_link = 'Wrist'  # 'jaco_6_hand_limb'
         self.lens_link = 'lens_link'
@@ -120,8 +122,11 @@ class GraspDataCollection:
         self.present_roll_angle_options = [
             x * 2.0 * math.pi / self.num_roll_angle_options for x in range(self.num_roll_angle_options)]
 
-        self.num_nbvs_to_request = 5
+        self.num_nbvs_to_request = 1
+        self.num_grasps_to_sample = 5
         self.top_ranked_nbvs = []
+        self.hand_crafted_grasps = {}
+        self.best_grasp_id = 0
 
         # gm params
         self.gm_res = 0.01  # [m]
@@ -169,6 +174,13 @@ class GraspDataCollection:
                 'jaco_arm_2_joint': -0.40208614052374525}
         return vals
 
+    def parse_hand_crafted_grasp_options(self):
+        with open("hand_crafted_grasp_locs.yaml", 'r') as stream:
+            data = yaml.load(stream)
+        for model, params in data.iteritems():
+            self.hand_crafted_grasps[model] = params
+        print self.hand_crafted_grasps
+        
     def get_nbvs_and_grasp_poses(self, candidate_grasps):
         rospy.wait_for_service('calculate_nbv')
         del self.top_ranked_nbvs[:]
@@ -178,17 +190,18 @@ class GraspDataCollection:
             # p = self.generate_grasp_pose('nbv_eval')
             for g in candidate_grasps:
                 eef_poses.poses.append(g.pose)
-            num_to_req = Int32()
-            num_to_req.data = self.num_nbvs_to_request
-            res = calculate_nbv(eef_poses, num_to_req)
-            print res
-            for p in res.nbv_poses.poses:
-                self.top_ranked_nbvs.append(p)
-            
+            # num_to_req = Int32()
+            # num_to_req.data = self.num_nbvs_to_request
+            # res = calculate_nbv(eef_poses, num_to_req)
+            res = calculate_nbv(eef_poses)
+            # print res
+            # for p in res.nbv_poses.poses:
+            self.top_ranked_nbvs.append(res.nbv)
+            self.best_grasp_id = res.selected_grasp_id.data
             # self.nbv_tf = res.nbv
             self.grasp_eef_pose_to_achieve_nbv.header.frame_id = "world"
             # just take the best one for simplicity
-            self.grasp_eef_pose_to_achieve_nbv.pose = res.eef_poses.poses[0]
+            self.grasp_eef_pose_to_achieve_nbv = candidate_grasps[self.best_grasp_id]
             # print self.nbv_tf, self.grasp_eef_pose_to_achieve_nbv
             # grasp_pose = res.eef_pose.pose
             # dummy = Transform()
@@ -215,6 +228,11 @@ class GraspDataCollection:
                 pose_msg.orientation.z, pose_msg.orientation.w]
         return (tf_t, tf_r)
 
+    def convertTfMsgToPosRotTuple(self, msg):
+        tf_t = [msg.translation.x, msg.translation.y, msg.translation.z]
+        tf_r = [msg.rotation.x, msg.rotation.y, msg.rotation.z, msg.rotation.w]
+        return (tf_t, tf_r)
+
     def generate_nbv_pose(self, angle, rank):
         # https://answers.ros.org/question/133331/multiply-two-tf-transforms-converted-to-4x4-matrices-in-python/
 
@@ -234,20 +252,33 @@ class GraspDataCollection:
         C_T_L.header.frame_id = "/" + self.lens_link
         C_T_L.child_frame_id = "/" + self.object_name
 
-        # # N_T_O
+        # B_T_O, the bb center wrt the orig obj
+        self.tf_listener.waitForTransform(
+            "/" + self.orig_obj, "/" + self.orig_bb_ctr, rospy.Time(0), rospy.Duration(3.0))
+        B_T_O = self.tf_listener.lookupTransform(
+            "/" + self.orig_obj, "/" + self.orig_bb_ctr, rospy.Time(0))
+        B_T_O_t = tf.transformations.translation_matrix(B_T_O[0])
+        B_T_O_r = tf.transformations.quaternion_matrix(B_T_O[1])
+        # N_T_O_r = tf.transformations.quaternion_matrix([0, 0, 0, 1])
+        B_T_O_m = np.dot(B_T_O_t, B_T_O_r)
+
+        # # N_T_O ### TODO WATCH FOR THE OFFSET FROM THE ORIGBB!
         # self.tf_listener.waitForTransform(
         #     "/" + self.orig_obj, "/" + self.nbv, rospy.Time(0), rospy.Duration(3.0))
         # N_T_O = self.tf_listener.lookupTransform(
         #     "/" + self.orig_obj, "/" + self.nbv, rospy.Time(0))
-        N_T_O = self.convertPoseMsgToTf(self.top_ranked_nbvs[rank])
-        print "Raw N_T_O", N_T_O
+        # N_T_O = self.convertPoseMsgToTf(self.top_ranked_nbvs[rank]) # beforehand it was a pose
+        N_T_B = self.convertTfMsgToPosRotTuple(self.top_ranked_nbvs[rank])
+        print "Raw N_T_B", N_T_B
         # N_T_O = ([0,0,0],[0.2618,0.319, -0.5778, 0.704]) # debugging! HACK!
-        N_T_O_t = tf.transformations.translation_matrix(N_T_O[0])
-        N_T_O_r = tf.transformations.quaternion_matrix(N_T_O[1])
+        N_T_B_t = tf.transformations.translation_matrix(N_T_B[0])
+        N_T_B_r = tf.transformations.quaternion_matrix(N_T_B[1])
         # N_T_O_r = tf.transformations.quaternion_matrix([0, 0, 0, 1])
-        N_T_O_m = np.dot(N_T_O_t, N_T_O_r)
-        print 'N_T_O_m\n', N_T_O_m
+        N_T_B_m = np.dot(N_T_B_t, N_T_B_r)
+        print 'N_T_B_m\n', N_T_B_m
 
+        N_T_O_m = np.dot(B_T_O_m, N_T_B_m)
+        print 'N_T_O_m\n', N_T_O_m
         # # C_T_L = C_T_P * P_T_L
         # prime
         # C_T_P_t = tf.transformations.translation_matrix([0, 0, 0, 1])
@@ -265,13 +296,13 @@ class GraspDataCollection:
         # alternative:
         C_T_P_t = tf.transformations.translation_matrix([0, 0, 0, 1])
         # C_T_P_r1 = tf.transformations.quaternion_matrix([0,0,1,0])
-        C_T_P_r = tf.transformations.inverse_matrix(tf.transformations.quaternion_matrix(N_T_O[1]))
+        C_T_P_r = tf.transformations.inverse_matrix(tf.transformations.quaternion_matrix(N_T_B[1])) # CHECK 
         # C_T_P_r = np.dot(C_T_P_r1, C_T_P_r2)
         print 'C_T_P_r', C_T_P_r
         C_T_P_m = np.dot(C_T_P_t, C_T_P_r)
         print 'C_T_P_m\n', C_T_P_m
 
-        P_T_L_t = tf.transformations.translation_matrix([0.0, 0, 0.3, 1.0])
+        P_T_L_t = tf.transformations.translation_matrix([0.0, 0, 0.4, 1.0])
         P_T_L_r = [[0, math.cos(angle), math.sin(angle), 0], [0, math.sin(
             angle), -math.cos(angle), 0], [-1, 0, 0, 0], [0, 0, 0, 1]]
         # P_T_L_r = tf.transformations.quaternion_matrix(
@@ -808,8 +839,8 @@ class GraspDataCollection:
         try:
             req = rospy.ServiceProxy(
                 '/capture_and_process_observation', CaptureAndProcessObservation)
-            msg = Bool()
-            msg.data = True
+            msg = Int32()
+            msg.data = self.best_grasp_id
             res = req(msg)
             print 'capture and process response:', res
         except rospy.ServiceException, e:
@@ -931,8 +962,8 @@ class GraspDataCollection:
         ps.pose.orientation.w = quat[3]
         return ps
 
-    def stand_in_coord_and_angle_to_eef_pose(self, coord, angle):
-        xw, yw = coord
+    def stand_in_coord_and_angle_to_eef_pose(self, coord):
+        xw, yw, angle = coord
         ps = PoseStamped()
         quat = tf.transformations.quaternion_from_euler(
             -math.pi, 0, angle + math.pi/2)  # TBA +/-!!! WAS -angle, should be opposite of what's in transform_hm 90deg HACK
@@ -1000,6 +1031,24 @@ class GraspDataCollection:
         # print vals
         return vals
 
+    def select_hand_crafted_grasp_pose(self):
+        self.parse_hand_crafted_grasp_options()
+        scales = [np.random.uniform() for _ in range(self.num_grasps_to_sample)] # proportions along each edge
+        grasp_edges = [e for e in self.hand_crafted_grasps[self.mesh_name]] # edge packets
+        # pick an edge
+        hcg = []
+        for scale in scales:
+            edge_id = np.random.randint(len(grasp_edges))
+            xmin = grasp_edges[edge_id]['x']['min']
+            xmax = grasp_edges[edge_id]['x']['max']
+            ymin = grasp_edges[edge_id]['y']['min']
+            ymax = grasp_edges[edge_id]['y']['max']            
+            x = scale * (xmax-xmin) + xmin
+            y = scale * (ymax-ymin) + ymin
+            theta = grasp_edges[edge_id]['theta']
+            hcg.append(self.stand_in_coord_and_angle_to_eef_pose((x, y, theta)))
+        return hcg
+
     def generate_grasp_pose_candidates(self, midpoints, angles, count=0):
         probs = []
         # print 'orig image', self.hm_image
@@ -1014,6 +1063,8 @@ class GraspDataCollection:
         # print [x for x in probs_descending[:self.num_grasp_candidates_to_generate]]
         # return [x[1] for x in probs_descending[:self.num_grasp_candidates_to_generate]]
         # UNCOMMENT THIS FOR FULL HEIGHT MAP READING
+        self.parse_hand_crafted_grasp_options()
+        scale = np.random.uniform()
         mps = [(0.23, 0.06), (0.17, 0.06)]  # for levels 2-4
         # mps = [(0.23, 0.0), (0.17, 0.0)]  # for level 1
         dummy = self.stand_in_coord_and_angle_to_eef_pose(mps[count], 0)
@@ -1115,17 +1166,17 @@ class GraspDataCollection:
 
 def main(args):
     rospy.init_node('grasp_data_collection')
-    gdc = GraspDataCollection(args[1])
+    gdc = GraspDataCollection(args[1], args[2])
     gdc.save_arm_home_state()
 
     # ### UNCOMMENT TO RETURN TO NORMAL
     # while not gdc.gm_received or not gdc.hm_received:
     #     print "waiting"
     #     rospy.sleep(0.5)
-    midpoints = gdc.generateSampleMidpoints()
-    angles = gdc.generateSampleAngles()
+    # midpoints = gdc.generateSampleMidpoints()
+    # angles = gdc.generateSampleAngles()
     # gdc.change_physics('unpause')
-    # quit()
+
     count = 0
 
     # ### UNCOMMENT TO RETURN TO NORMAL
@@ -1196,10 +1247,13 @@ def main(args):
     #     gdc.increment_current_trial_no()
     #     gdc.return_arm_home()
     # THIS BLOCK DOES THE ACTUAL ARM MOVING /END
+    gdc.evaluate_against_gt()
 
     while gdc.current_trial_no < gdc.total_num_trials:
-        candidate_grasps = gdc.generate_grasp_pose_candidates(
-            midpoints, angles, count)
+        candidate_grasps = gdc.select_hand_crafted_grasp_pose()
+        print candidate_grasps
+        # candidate_grasps = gdc.generate_grasp_pose_candidates(
+        #     midpoints, angles, count)
         raw_input("Press to calculate nbv")
         gdc.get_nbvs_and_grasp_poses(candidate_grasps)
         js_pre, _ = gdc.get_ik('pre')

@@ -1,5 +1,4 @@
 geometry_msgs/PoseArray eef_poses
-std_msgs/Int32 num_nbvs_to_request
 ---
-geometry_msgs/PoseArray nbv_poses
-geometry_msgs/PoseArray eef_poses
+geometry_msgs/Transform nbv
+std_msgs/Int32 selected_grasp_id

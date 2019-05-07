@@ -64,9 +64,9 @@ public:
   int NUM_ELEVATION_POINTS = 6;
   float VIEW_RADIUS = 0.35f;
   float TABLETOP_HEIGHT = 0.735f;
-  float P_OCC = 0.99f;
+  float P_OCC = 0.9f;
   float P_UNOBS = 0.5f;
-  float P_FREE = 0.01f;
+  float P_FREE = 0.1f;
   std::string object_frame_id_;
   bool vg_initialized_ = false;
   IndexedPointsWithState ipp_;
@@ -82,6 +82,7 @@ public:
   int im_nr_, im_nc_;
   cv::Mat height_map_, height_map_mask_;
   std::vector<std::set<int>> finger_occluded_voxels_by_grasp_id_;
+  std::vector<float> azimuths_, elevations_;
 
   enum Observation
   {
@@ -99,12 +100,12 @@ public:
   pcl::PointXYZ orig_bb_min_, orig_bb_max_;
   std::vector<float> leaf_size_;
   int nr_, nc_, nl_;
-  float LEAF_SIZE = 0.025f; // 0.01f
+  float LEAF_SIZE; // = 0.01f; // 0.01f
   int num_voxels_;
 
   // gripper config
   tf::StampedTransform pi_T_fbl_, th_T_fbl_, in_T_fbl_;
-  float FINGER_SCALE_FACTOR = 1.2f;
+  float FINGER_SCALE_FACTOR = 1.3f;
 
   void publishHeightMapFromVoxelGrid()
   {
@@ -295,8 +296,8 @@ public:
 
   bool captureAndProcessObservation(grasped_reconstruction::CaptureAndProcessObservation::Request &req, grasped_reconstruction::CaptureAndProcessObservation::Response &res)
   {
-    // int grasp_id_selected = req.grasp_id.data;
-    std::set<int> finger_occluded_voxels_at_selected_grasp_id = finger_occluded_voxels_by_grasp_id_[0];
+    int grasp_id_selected = req.grasp_id.data;
+    std::set<int> finger_occluded_voxels_at_selected_grasp_id = finger_occluded_voxels_by_grasp_id_[grasp_id_selected];
     sensor_msgs::PointCloud2Ptr msg_transformed(new sensor_msgs::PointCloud2());
     std::string target_frame("world");
     // std::cout << "here0" << std::endl;
@@ -597,6 +598,7 @@ public:
     nh_.getParam("/gMin", gMin);
     nh_.getParam("/rMin", rMin);
     nh_.getParam("/object_frame_id", object_frame_id_);
+    nh_.getParam("/leaf_size", LEAF_SIZE);
   }
 
   void setInitialVoxelProbabilities()
@@ -707,7 +709,7 @@ public:
     {
       ROS_ERROR("%s", ex.what());
     }
-    std::cout << "origobj xyz: " << origobj_T_w_.getOrigin().x() << " " << origobj_T_w_.getOrigin().y() << " " << origobj_T_w_.getOrigin().z()<<std::endl;
+    std::cout << "origobj xyz: " << origobj_T_w_.getOrigin().x() << " " << origobj_T_w_.getOrigin().y() << " " << origobj_T_w_.getOrigin().z() << std::endl;
 
     geometry_msgs::TransformStamped static_transformStamped;
     static_transformStamped.header.stamp = ros::Time::now();
@@ -776,7 +778,7 @@ public:
     ros::Duration(1.0).sleep();
     divideBoundingBoxIntoVoxels();
     setInitialVoxelProbabilities();
-    publishHeightMapFromVoxelGrid();
+    // publishHeightMapFromVoxelGrid();
 
     for (size_t i = 0; i < num_voxels_; ++i)
     {
@@ -792,12 +794,13 @@ public:
     finger_occluded_voxels_by_grasp_id_.clear();
     std::vector<float> view_entropies;
     std::vector<float> best_view_entropies;
-    std::vector<std::vector<float>> all_view_entropies;
+    // std::vector<std::vector<float>> all_view_entropies;
     float highest_entropy = 0.0f;
     geometry_msgs::PoseStamped best_eef_pose;
     int best_view_id;
     std::set<int> finger_occluded_voxels;
     Eigen::Quaternionf best_view;
+    int grasp_id_for_nbv = 0;
     int count = 0;
     for (auto it = req.eef_poses.poses.begin(); it != req.eef_poses.poses.end(); it++) // go through every candidate pose
     {
@@ -806,42 +809,45 @@ public:
       ps.header.frame_id = "/world";
       getVoxelIdsOccludedByFingers(ps, finger_occluded_voxels);
       finger_occluded_voxels_by_grasp_id_.push_back(finger_occluded_voxels);
-      int best_view_id_per_pose;
-      Eigen::Quaternionf best_view_per_pose = calculateNextBestView(finger_occluded_voxels, view_entropies, best_view_id_per_pose);
-      all_view_entropies.push_back(view_entropies);
+      int best_view_id_per_grasp_id;
+      Eigen::Quaternionf best_view_per_grasp_id = calculateNextBestView(finger_occluded_voxels, view_entropies, best_view_id_per_grasp_id);
+      // all_view_entropies.push_back(view_entropies);
       float max_entropy = *std::max_element(view_entropies.begin(), view_entropies.end());
       if (it == req.eef_poses.poses.begin())
         ROS_ASSERT(max_entropy > 0.0f);
       if (max_entropy > highest_entropy)
       {
         best_eef_pose = ps;
-        best_view = best_view_per_pose;
-        best_view_id = best_view_id_per_pose;
-        std::cout << "best view id: " << best_view_id << std::endl;
+        best_view = best_view_per_grasp_id;
+        best_view_id = best_view_id_per_grasp_id;
+        grasp_id_for_nbv = count;
+        std::cout << "best view id: " << best_view_id << " at grasp id: " << grasp_id_for_nbv << std::endl;
         best_view_entropies = view_entropies;
         highest_entropy = max_entropy;
       }
       finger_occluded_voxels.clear();
       view_entropies.clear();
+      count++;
     }
 
     tf::Quaternion q(best_view.x(), best_view.y(), best_view.z(), best_view.w());
     tf::Transform t;
     t.setRotation(q);
-    tf::Transform n_T_w(t * origobj_T_w_);
+    // tf::Transform n_T_w(t * origobj_T_w_);
 
     publishEntropyArrowSphere(best_view_entropies);
 
-    // geometry_msgs::Transform tf;
-    // tf.translation.x = n_T_w.getOrigin().x();
-    // tf.translation.y = n_T_w.getOrigin().y();
-    // tf.translation.z = n_T_w.getOrigin().z();
-    // tf.rotation.x = n_T_w.getRotation()[0];
-    // tf.rotation.y = n_T_w.getRotation()[1];
-    // tf.rotation.z = n_T_w.getRotation()[2];
-    // tf.rotation.w = n_T_w.getRotation()[3];
-    // res.nbv = tf;
-    // res.eef_pose = best_eef_pose;
+    geometry_msgs::Transform tf;
+    tf.translation.x = nbv_origins_.at(best_view_id)[0];
+    tf.translation.y = nbv_origins_.at(best_view_id)[1];
+    tf.translation.z = nbv_origins_.at(best_view_id)[2];
+    tf.rotation.x = t.getRotation()[0];
+    tf.rotation.y = t.getRotation()[1];
+    tf.rotation.z = t.getRotation()[2];
+    tf.rotation.w = t.getRotation()[3];
+    res.nbv = tf;
+    // res.eef_pose = best_eef_pose.pose;
+    res.selected_grasp_id.data = grasp_id_for_nbv;
     // this worked fine for a single NBV being returned
 
     geometry_msgs::TransformStamped static_transformStamped;
@@ -849,26 +855,20 @@ public:
     static_transformStamped.header.stamp = ros::Time::now();
     static_transformStamped.header.frame_id = "world";
     static_transformStamped.child_frame_id = "nbv";
-    /*static_transformStamped.transform.translation.x = n_T_w.getOrigin().x();
-    static_transformStamped.transform.translation.y = n_T_w.getOrigin().y();
-    static_transformStamped.transform.translation.z = n_T_w.getOrigin().z();
-    static_transformStamped.transform.rotation.x = n_T_w.getRotation()[0];
-    static_transformStamped.transform.rotation.y = n_T_w.getRotation()[1];
-    static_transformStamped.transform.rotation.z = n_T_w.getRotation()[2];
-    static_transformStamped.transform.rotation.w = n_T_w.getRotation()[3];*/
+    static_transformStamped.transform = tf;
     // orig
-    static_transformStamped.transform.translation.x = nbv_origins_.at(best_view_id)[0];
-    static_transformStamped.transform.translation.y = nbv_origins_.at(best_view_id)[1];
-    static_transformStamped.transform.translation.z = nbv_origins_.at(best_view_id)[2];
-    static_transformStamped.transform.rotation.x = best_view.x();
-    static_transformStamped.transform.rotation.y = best_view.y();
-    static_transformStamped.transform.rotation.z = best_view.z();
-    static_transformStamped.transform.rotation.w = best_view.w();
+    // static_transformStamped.transform.translation.x = nbv_origins_.at(best_view_id)[0];
+    // static_transformStamped.transform.translation.y = nbv_origins_.at(best_view_id)[1];
+    // static_transformStamped.transform.translation.z = nbv_origins_.at(best_view_id)[2];
+    // static_transformStamped.transform.rotation.x = best_view.x();
+    // static_transformStamped.transform.rotation.y = best_view.y();
+    // static_transformStamped.transform.rotation.z = best_view.z();
+    // static_transformStamped.transform.rotation.w = best_view.w();
     static_broadcaster.sendTransform(static_transformStamped);
 
     // get the k best views across all grasps considered
 
-    std::vector<float> all_view_entropies_row_vector;
+    /*std::vector<float> all_view_entropies_row_vector;
     std::vector<std::pair<int, int>> top_ranked_nbv_ids_and_grasp_ids; // first is nbv id and second is grasp id
     for (size_t grasp_index = 0; grasp_index < all_view_entropies.size(); grasp_index++)
     {
@@ -900,6 +900,7 @@ public:
     }
 
     geometry_msgs::PoseArray nbv_poses, eef_poses;
+    std_msgs::Int32MultiArray selected_grasp_ids;
     nbv_poses.header.frame_id = "world";
     eef_poses.header.frame_id = "world";
     for (size_t i = 0; i < top_ranked_nbv_ids_and_grasp_ids.size(); ++i)
@@ -925,9 +926,8 @@ public:
       nbv_pose.orientation.w = n_T_w2.getRotation()[3];
       nbv_poses.poses.push_back(nbv_pose);
       eef_poses.poses.push_back(req.eef_poses.poses[grasp_id]);
-    }
-    res.nbv_poses = nbv_poses;
-    res.eef_poses = eef_poses;
+      selected_grasp_ids.data.push_back(grasp_id);
+    }*/
     return true;
   }
 
@@ -1132,6 +1132,25 @@ public:
     static_transformStamped.transform.rotation.z = t.getRotation()[2];
     static_transformStamped.transform.rotation.w = t.getRotation()[3];
     static_broadcaster.sendTransform(static_transformStamped);
+
+    tf::Transform t2;
+    t2.setOrigin(tf::Vector3(orig_bb_max_.x, orig_bb_max_.y, orig_bb_max_.z));
+    t2.setRotation(tf::Quaternion(0, 0, 0, 1));
+    geometry_msgs::TransformStamped static_transformStamped2;
+
+    static_transformStamped2.header.stamp = ros::Time::now();
+    static_transformStamped2.header.frame_id = "world";
+    static_transformStamped2.child_frame_id = "orig_bb_ctr";
+    static_transformStamped2.transform.translation.x = 0.5 * (t.getOrigin().x() + t2.getOrigin().x());
+    static_transformStamped2.transform.translation.y = 0.5 * (t.getOrigin().y() + t2.getOrigin().y());
+    static_transformStamped2.transform.translation.z = 0.5 * (t.getOrigin().z() + t2.getOrigin().z());
+    static_transformStamped2.transform.rotation.x = t.getRotation()[0];
+    static_transformStamped2.transform.rotation.y = t.getRotation()[1];
+    static_transformStamped2.transform.rotation.z = t.getRotation()[2];
+    static_transformStamped2.transform.rotation.w = t.getRotation()[3];
+    static_broadcaster.sendTransform(static_transformStamped2);
+
+        
   }
 
   void saveCurrentEefPoseClbk(const std_msgs::String &msg)
@@ -1268,6 +1287,12 @@ public:
         pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
         pass.filter(*cloud);
 
+        pass.setInputCloud(cloud);
+        pass.setFilterFieldName("z");
+        pass.setFilterLimits(0.9, 10);
+        pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
+        // pass.filter(*cloud);
+
         pass.setFilterFieldName("x");
         pass.setFilterLimits(0, 0.4);
         pass.setFilterLimitsNegative(false); // allow to pass what is inside of this range
@@ -1339,7 +1364,12 @@ public:
       pass.setFilterFieldName("z");
       pass.setFilterLimits(-0.5, TABLETOP_HEIGHT);
       pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
-      // pass.filter(*cloud);
+
+      pass.setInputCloud(cloud);
+      pass.setFilterFieldName("z");
+      pass.setFilterLimits(0.9, 10);
+      pass.setFilterLimitsNegative(true); // allow to pass what is outside of this range
+      pass.filter(*cloud);
 
       pass.setFilterFieldName("x");
       pass.setFilterLimits(-0.1, 0.3);
@@ -1908,21 +1938,26 @@ public:
   void generateViewCandidates()
   {
     std::cout << "Generating view candidates" << std::endl;
-    float az_min = 0.0f + M_PI / 16;
-    float az_max = 2.0f * M_PI + M_PI / 16;
-    float el_min = -M_PI / 2.0f + M_PI / 16;
-    float el_max = M_PI / 2.0f + M_PI / 16;
+    float az_min = 0.0f;// M_PI / 16;
+    float az_max = 2.0f * M_PI;//+ M_PI / 16;
+    float el_min = -M_PI / 2.0f + M_PI / 8;
+    float el_max = M_PI / 2.0f - M_PI / 8;
     float az_incr = (az_max - az_min) / NUM_AZIMUTH_POINTS;
     float el_incr = (el_max - el_min) / NUM_ELEVATION_POINTS;
+
+    // find center of orig bb
+    float orig_bb_center_x = 0.5f * (orig_bb_min_.x + orig_bb_max_.x);
+    float orig_bb_center_y = 0.5f * (orig_bb_min_.y + orig_bb_max_.y);
+    float orig_bb_center_z = 0.5f * (orig_bb_min_.z + orig_bb_max_.z);
 
     for (float az = az_min; az < az_max; az += az_incr)
     {
       for (float el = el_min; el < el_max; el += el_incr)
       {
         Eigen::Vector4f v;
-        v[0] = VIEW_RADIUS * cos(az) * cos(el) + origobj_T_w_.getOrigin().getX();
-        v[1] = VIEW_RADIUS * sin(az) * cos(el) + origobj_T_w_.getOrigin().getY();
-        v[2] = VIEW_RADIUS * sin(el) + origobj_T_w_.getOrigin().getZ();
+        v[0] = VIEW_RADIUS * cos(az) * cos(el) + orig_bb_center_x;
+        v[1] = VIEW_RADIUS * sin(az) * cos(el) + orig_bb_center_y;
+        v[2] = VIEW_RADIUS * sin(el) + orig_bb_center_z;
         v[3] = 0.0f;
         nbv_origins_.push_back(v);
         // calculate quaternion from view to origin
@@ -1932,6 +1967,8 @@ public:
         axis << -sin(az), cos(az), 0.0f;
         q = Eigen::AngleAxisf(-el, axis) * Eigen::AngleAxisf(az, Eigen::Vector3f::UnitZ());
         nbv_orientations_.push_back(q);
+        azimuths_.push_back(az);
+        elevations_.push_back(el);
       }
     }
   }
