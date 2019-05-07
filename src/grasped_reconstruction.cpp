@@ -64,9 +64,9 @@ public:
   int NUM_ELEVATION_POINTS = 6;
   float VIEW_RADIUS = 0.35f;
   float TABLETOP_HEIGHT = 0.735f;
-  float P_OCC = 0.9f;
+  float P_OCC = 0.999f;
   float P_UNOBS = 0.5f;
-  float P_FREE = 0.1f;
+  float P_FREE = 0.001f;
   std::string object_frame_id_;
   bool vg_initialized_ = false;
   IndexedPointsWithState ipp_;
@@ -1052,7 +1052,16 @@ public:
     cropHullFilter.setInputCloud(pc);
     boost::shared_ptr<PointCloud> filtered(new PointCloud());
     cropHullFilter.filter(*filtered);
-    std::cout << "Proportion occluded by fingers: " << float(filtered->size()) / float(num_voxels_) << std::endl;
+    // get number of unobserved voxels
+    int num_unobs_voxels = 0;
+    for (const auto &v : cell_occupancy_state_)
+    {
+      if (v.second == Observation::UNOBSERVED)
+      {
+        num_unobs_voxels++;
+      }
+    }
+    std::cout << "Proportion of unobserved occluded by fingers: " << float(filtered->size()) / float(num_unobs_voxels) << std::endl;
     pcl::PCLPointCloud2 cloud_filtered2;
     pcl::toPCLPointCloud2(*filtered, cloud_filtered2);
     sensor_msgs::PointCloud2Ptr output(new sensor_msgs::PointCloud2());
@@ -1149,8 +1158,6 @@ public:
     static_transformStamped2.transform.rotation.z = t.getRotation()[2];
     static_transformStamped2.transform.rotation.w = t.getRotation()[3];
     static_broadcaster.sendTransform(static_transformStamped2);
-
-        
   }
 
   void saveCurrentEefPoseClbk(const std_msgs::String &msg)
@@ -1624,9 +1631,11 @@ public:
     float entropy = 0.0f;
     // int best_view_id;
     int view_id = 0;
+    ros::Time start = ros::Time::now();
     for (const auto &v : nbv_origins_)
     {
       float e = calculateViewEntropy(v, finger_occluded_voxels);
+      std::cout << "Az/El: " << azimuths_[view_id] << " " << elevations_[view_id] << " entropy: " << e << std::endl;
       view_entropies.push_back(e);
       if (e > entropy)
       {
@@ -1636,6 +1645,7 @@ public:
       }
       view_id++;
     }
+    std::cout<<"NBV calc took: "<<ros::Time::now() - start<<std::endl;
     std::cout << "Origin: " << best_view[0] << " " << best_view[1] << " " << best_view[2] << " Entropy: " << entropy << "best id: " << best_view_id << std::endl;
     return nbv_orientations_[best_view_id];
   }
@@ -1681,7 +1691,7 @@ public:
           // index << std::endl;
         }
       }
-      entropy += calculateEntropyAlongRay(out_ray_unique, finger_occluded_voxels);
+      entropy += calculateEntropyAlongRay(out_ray, finger_occluded_voxels); // was out ray unique
     }
 
     return entropy;
@@ -1690,24 +1700,28 @@ public:
   float calculateEntropyAlongRay(const std::vector<Eigen::Vector3i> &ray, const std::set<int> &finger_occluded_voxels) // TODO distance weighted
   {
     float entropy = 0.0f;
+    bool continue_in_loop = true;
     for (const auto &v : ray)
     {
-      int index = gridCoordToVoxelIndex(v);
-      if (finger_occluded_voxels.find(index) != finger_occluded_voxels.end()) // if this voxel is hidden by the fingers
+      if (continue_in_loop) // to make the former "break" behavior more explicit
       {
-        entropy += 0.0f; // don't learn anything from it
-      }
-      else
-      {
-        // std::cout << ">> along ray... Grid coord: " << v[0] << " " << v[1] <<
-        // " " << v[2] << " Voxel index: " << index << std::endl;
-        auto it_prob = cell_occupancy_state_.find(gridCoordToVoxelIndex(v));
-        ROS_ASSERT(it_prob != cell_occupancy_state_.end());
-        int state = it_prob->second;
-        float p = probability_by_state_.find(state)->second;
-        if (state == Observation::OCCUPIED)
-          break;
-        entropy += -p * log(p) - (1.0f - p) * log(1.0f - p);
+        int index = gridCoordToVoxelIndex(v);
+        if (finger_occluded_voxels.find(index) != finger_occluded_voxels.end()) // if this voxel is hidden by the fingers
+        {
+          entropy += 0.0f; // don't learn anything
+        }
+        else
+        {
+          // std::cout << ">> along ray... Grid coord: " << v[0] << " " << v[1] <<
+          // " " << v[2] << " Voxel index: " << index << std::endl;
+          auto it_prob = cell_occupancy_state_.find(gridCoordToVoxelIndex(v));
+          ROS_ASSERT(it_prob != cell_occupancy_state_.end());
+          int state = it_prob->second;
+          float p = probability_by_state_.find(state)->second;
+          if (state == Observation::OCCUPIED)
+            continue_in_loop = false;
+          entropy += -p * log(p) - (1.0f - p) * log(1.0f - p);
+        }
       }
     }
     // std::cout << "Entropy from this ray cast: " << entropy << std::endl;
@@ -1938,8 +1952,8 @@ public:
   void generateViewCandidates()
   {
     std::cout << "Generating view candidates" << std::endl;
-    float az_min = 0.0f;// M_PI / 16;
-    float az_max = 2.0f * M_PI;//+ M_PI / 16;
+    float az_min = 0.0f;        // M_PI / 16;
+    float az_max = 2.0f * M_PI; //+ M_PI / 16;
     float el_min = -M_PI / 2.0f + M_PI / 8;
     float el_max = M_PI / 2.0f - M_PI / 8;
     float az_incr = (az_max - az_min) / NUM_AZIMUTH_POINTS;

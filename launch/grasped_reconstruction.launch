@@ -10,6 +10,6 @@
        bMin: 0
        bMax: 255 -->
        object_frame_id: "/obj"
-       leaf_size: 0.015
+       leaf_size: 0.02
       </rosparam>
 </launch>

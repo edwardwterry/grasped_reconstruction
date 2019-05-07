@@ -596,7 +596,7 @@ class GraspDataCollection:
         mpr.start_state.attached_collision_objects.append(aco)
         mpr.goal_constraints = [con]
         mpr.group_name = self.planning_group_name
-        mpr.num_planning_attempts = 10
+        mpr.num_planning_attempts = 100
         mpr.allowed_planning_time = 3.0  # [s]
         # print 'mpr in move_to_state\n', mpr
         try:
