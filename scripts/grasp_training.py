@@ -47,7 +47,7 @@ import tf2_ros
 import imutils
 
 np.set_printoptions(formatter={'float': lambda x: "{0:0.3f}".format(x)})
-
+np.random.seed(0)
 
 class GraspDataCollection:
     def __init__(self, verbosity, mesh_name):
@@ -1163,6 +1163,31 @@ class GraspDataCollection:
             except rospy.ServiceException, e:
                 print "Service call failed: %s" % e                     
 
+    def do_training(self):
+        num_training_examples = 50
+        xlim = [0.0, 0.4]
+        ylim = [-0.2, 0.2]
+        thetalim = [0, math.pi * 2.0]
+        # sample uniformly in the zone
+        x_all = np.random.uniform(xlim[0], xlim[1], num_training_examples)
+        y_all = np.random.uniform(ylim[0], ylim[1], num_training_examples)
+        th_all = np.random.uniform(thetalim[0], thetalim[1], num_training_examples)
+        candidate_grasps = []
+        for (x, y, th) in zip(x_all, y_all, th_all):
+            candidate_grasps.append(self.stand_in_coord_and_angle_to_eef_pose((x, y, th)))
+        print "cg", candidate_grasps
+        eef_poses = PoseArray()
+        for g in candidate_grasps:
+            eef_poses.poses.append(g.pose)
+        # call rosservice
+        try:
+            req = rospy.ServiceProxy('/fingertips_in_collision', FingertipsInCollision)
+            res = req(eef_poses)
+            collision_results = res.in_collision.data
+        except rospy.ServiceException, e:
+            print "Service call failed: %s" % e
+        for (x, y, th, cr) in zip(x_all, y_all, th_all, collision_results):
+            print "X:", x, " Y:", y, " Th:", th, " Res:", cr
 
 def main(args):
     rospy.init_node('grasp_data_collection')
@@ -1176,7 +1201,8 @@ def main(args):
     # midpoints = gdc.generateSampleMidpoints()
     # angles = gdc.generateSampleAngles()
     # gdc.change_physics('unpause')
-
+    gdc.do_training()
+    quit()
     count = 0
 
     # ### UNCOMMENT TO RETURN TO NORMAL

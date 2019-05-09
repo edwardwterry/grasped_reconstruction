@@ -36,6 +36,7 @@ public:
     hm_vg_mask_im_pub = it.advertise("height_map_vg_mask_image", 1);
 
     calculate_nbv_service_ = nh_.advertiseService("calculate_nbv", &GraspedReconstruction::calculateNbv, this);
+    fingertips_in_collision_service_ = nh_.advertiseService("fingertips_in_collision", &GraspedReconstruction::fingertipsInCollisionWithObject, this);
     capture_and_process_observation_service_ = nh_.advertiseService("capture_and_process_observation", &GraspedReconstruction::captureAndProcessObservation, this);
     eval_gt_service_ = nh_.advertiseService("eval_gt", &GraspedReconstruction::evaluateOccupancyGridAgainstGroundTruth, this);
 
@@ -49,7 +50,7 @@ public:
   ros::NodeHandle nh_;
   ros::Subscriber calc_observed_points_sub, gm_sub, calc_unobserved_points_sub, save_eef_pose_sub, pc_anytime_sub, color_sub, tabletop_sub, vol_gt_sub;
   ros::Publisher coeff_pub, object_pub, tabletop_pub, bb_pub, cf_pub, occ_pub, combo_pub, entropy_arrow_pub, nbv_pub, anytime_pub, ch_points_pub, ch_pub, pc_by_category_pub, pc_occupied_pub;
-  ros::ServiceServer calculate_nbv_service_, capture_and_process_observation_service_, eval_gt_service_;
+  ros::ServiceServer calculate_nbv_service_, capture_and_process_observation_service_, eval_gt_service_, fingertips_in_collision_service_;
   image_transport::Publisher hm_im_pub, hm_vg_im_pub, hm_vg_mask_im_pub;
   tf::TransformListener listener;
   tf::TransformBroadcaster broadcaster;
@@ -81,7 +82,7 @@ public:
   float BB_SURFACE_MARGIN = 0.01; // [m]
   float hm_xmin_, hm_xmax_, hm_ymin_, hm_ymax_;
   int im_nr_, im_nc_;
-  cv::Mat height_map_, height_map_mask_;
+  sensor_msgs::Image height_map_, height_map_mask_;
   std::vector<std::set<int>> finger_occluded_voxels_by_grasp_id_;
   std::vector<float> azimuths_, elevations_;
 
@@ -114,71 +115,117 @@ public:
     get_hm_image_bounds(border);
 
     // https://stackoverflow.com/questions/20816955/how-to-set-all-pixels-of-an-opencv-mat-to-a-specific-value
-    height_map_ = cv::Mat(im_nr_, im_nc_, CV_32FC1, cv::Scalar(0.0f));
-    height_map_mask_ = cv::Mat(im_nr_, im_nc_, CV_8UC1, cv::Scalar(0));
+    // height_map_ = cv::Mat(im_nr_, im_nc_, CV_32FC1, cv::Scalar(0.0f));
+    // height_map_ = cv::Mat(im_nr_, im_nc_, CV_8UC1, cv::Scalar(0));
+    // height_map_mask_ = cv::Mat(im_nr_, im_nc_, CV_8UC1, cv::Scalar(0));
+    height_map_mask_.height = im_nr_;
+    height_map_mask_.width = im_nc_;
+    height_map_mask_.encoding = "mono8";
+    height_map_mask_.step = im_nc_; // https://answers.ros.org/question/11312/what-is-image-step/
 
-    // std::cout << "here" << height_map_.rows << " " << height_map_.cols << " " << height_map_mask_.rows << " " << height_map_mask_.cols << std::endl;
+    // std::cout << "hm size" << height_map_.rows << " " << height_map_.cols << " " << height_map_mask_.rows << " " << height_map_mask_.cols << std::endl;
     // std::cout<<height_map_mask<<std::endl;
-    for (int r = 0; r < nr_; ++r)
+    int dr, dc;
+    hm_voxel_grid_rc_to_grid_offset(dr, dc);
+    std::cout<<"dr, dc: "<<dr<<" "<<dc<<std::endl;
+    for (int r = 0; r < im_nr_; ++r)
     {
-      for (int c = 0; c < nc_; ++c)
+      for (int c = 0; c < im_nc_; ++c)
       {
-        int l = nl_ - 1; // start at the top
-        // grid coord to index
-        int index = gridCoordToVoxelIndex(Eigen::Vector3i(r, c, l));
-        // std::cout << "here2a" << std::endl;
-        // get current occupancy state from it
-        int state = cell_occupancy_state_[index];
-        // std::cout << "here2b" << std::endl;
-        int mask_val = 0;
-        while (state == Observation::FREE && l > 0)
+        float x, y;
+        hm_voxel_grid_rc_to_global(r, c, x, y);
+        std::cout<<"global pos at r c: "<<r<<" "<<c<<" "<<x<<" "<<y<<std::endl;
+        // Eigen::Vector4f w;
+        // w << x, y, 0.0f, 1.
+        if (x < orig_bb_min_.x || x > orig_bb_max_.x || y < orig_bb_min_.y || y > orig_bb_max_.y)
         {
-          l--;
-          index = gridCoordToVoxelIndex(Eigen::Vector3i(r, c, l));
-          // std::cout << "here2c" << std::endl;
-          state = cell_occupancy_state_[index];
-          // std::cout << "here2d" << std::endl;
+          height_map_mask_.data.push_back(0); // if outside bounds
         }
-        if (state == Observation::UNOBSERVED)
+        else
         {
-          mask_val = 255;
-          // std::cout << "here2e" << std::endl;
+          int l = nl_ - 1; // start at the top
+          // grid coord to index
+          int index = gridCoordToVoxelIndex(Eigen::Vector3i(r - dr, c - dc, l));
+          std::cout << "index: " << index<<std::endl;
+          // get current occupancy state from it
+          int state = cell_occupancy_state_[index];
+          // std::cout << "here2b" << std::endl;
+          int mask_val = 0;
+          while (state == Observation::FREE && l > 0)
+          {
+            l--;
+            index = gridCoordToVoxelIndex(Eigen::Vector3i(r - dr, c - dc, l));
+            // std::cout << "here2c" << std::endl;
+            state = cell_occupancy_state_[index];
+            // std::cout << "here2d" << std::endl;
+          }
+          if (state == Observation::UNOBSERVED)
+          {
+            mask_val = 255;
+            // std::cout << "here2e" << std::endl;
+          }
+          Eigen::Vector4f wc = gridCoordToWorldCoord(Eigen::Vector3i(r - dr, c - dc, l));
+          std::cout << "r c l" << r - dr << " " << c  - dc<< " " << l << std::endl;
+          // std::cout << "here2f" << wc.matrix() << std::endl;
+          std::cout << "xyz: " << wc(0) << " " << wc(1) << " " << wc(2) << std::endl;
+          // std::cout << "hm bounds: " << hm_xmin_ << " " << hm_xmax_ << " " << hm_ymin_ << " " << hm_ymax_ << " " << im_nr_ << " " << im_nc_ << std::endl;
+          // hm_voxel_grid_global_to_rc(wc(0), wc(1), im_r, im_c);
+          height_map_mask_.data.push_back(mask_val); // if outside bounds
         }
-        int im_r, im_c;
-        Eigen::Vector4f wc = gridCoordToWorldCoord(Eigen::Vector3i(r, c, l));
-        // std::cout << "r c l" << r << " " << c << " " << l << std::endl;
-        // std::cout << "here2f" << wc.matrix() << std::endl;
-        // std::cout << "here2f" << wc(0) << " " << wc(1) << std::endl;
-        // std::cout << "hm bounds: " << hm_xmin_ << " " << hm_xmax_ << " " << hm_ymin_ << " " << hm_ymax_ << " " << im_nr_ << " " << im_nc_ << std::endl;
-        hm_voxel_grid_global_to_rc(wc(0), wc(1), im_r, im_c);
-        std::cout << wc(2) << std::endl;
-        // std::cout<< height_map.at<float>(im_r, im_c)<<std::endl; // set it to the height of the highest free voxel
-        height_map_.at<float>(im_r, im_c) = wc(2); // set it to the height of the highest free voxel
-        std::cout << mask_val << std::endl;
-        height_map_mask_.at<int>(im_r, im_c) = mask_val; // set it to the height of the highest free voxel
-        // std::cout << "here2i" << std::endl;
       }
     }
-    // std::cout << height_map_ << std::endl;
 
-    // https://stackoverflow.com/questions/27080085/how-to-convert-a-cvmat-into-a-sensor-msgs-in-ros
-    cv_bridge::CvImagePtr img_bridge(new cv_bridge::CvImage);
-    sensor_msgs::Image img_msg; // >> message to be sent
+    // for (int r = 0; r < nr_; ++r)
+    // {
+    //   for (int c = 0; c < nc_; ++c)
+    //   {
+    //     int l = nl_ - 1; // start at the top
+    //     // grid coord to index
+    //     int index = gridCoordToVoxelIndex(Eigen::Vector3i(r, c, l));
+    //     // std::cout << "here2a" << std::endl;
+    //     // get current occupancy state from it
+    //     int state = cell_occupancy_state_[index];
+    //     // std::cout << "here2b" << std::endl;
+    //     int mask_val = 0;
+    //     while (state == Observation::FREE && l > 0)
+    //     {
+    //       l--;
+    //       index = gridCoordToVoxelIndex(Eigen::Vector3i(r, c, l));
+    //       // std::cout << "here2c" << std::endl;
+    //       state = cell_occupancy_state_[index];
+    //       // std::cout << "here2d" << std::endl;
+    //     }
+    //     if (state == Observation::UNOBSERVED)
+    //     {
+    //       mask_val = 255;
+    //       // std::cout << "here2e" << std::endl;
+    //     }
+    //     int im_r, im_c;
+    //     Eigen::Vector4f wc = gridCoordToWorldCoord(Eigen::Vector3i(r, c, l));
+    //     std::cout << "r c l" << r << " " << c << " " << l << std::endl;
+    //     // std::cout << "here2f" << wc.matrix() << std::endl;
+    //     std::cout << "xyz" << wc(0) << " " << wc(1) << " " << wc(2) << std::endl;
+    //     // std::cout << "hm bounds: " << hm_xmin_ << " " << hm_xmax_ << " " << hm_ymin_ << " " << hm_ymax_ << " " << im_nr_ << " " << im_nc_ << std::endl;
+    //     hm_voxel_grid_global_to_rc(wc(0), wc(1), im_r, im_c);
+    //     // std::cout << wc(2) << std::endl;
+    //     // std::cout<< height_map.at<float>(im_r, im_c)<<std::endl; // set it to the height of the highest free voxel
+    //     // height_map_.at<int>(im_r, im_c) = static_cast<int>((wc(2)-TABLETOP_HEIGHT)*255); // set it to the height of the highest free voxel
+    //     // std::cout << mask_val << std::endl;
+    //     // height_map_mask_.at<int>(im_r, im_c) = mask_val; // if unobserved
+    //     // std::cout << "here2i" << std::endl;
+    //   }
+    // }
 
-    std_msgs::Header header; // empty header
-    img_bridge->image = height_map_.clone();
-    img_bridge->encoding = "32FC1";
-    img_bridge->header = header;
-    // std::cout << "here3" << std::endl;
-    // img_bridge = cv_bridge::CvImage(header, sensor_msgs::image_encodings::32FC1, height_map);
-    img_bridge->toImageMsg(img_msg); // from cv_bridge to sensor_msgs::Image
-    hm_vg_im_pub.publish(img_msg);   // ros::Publisher pub_img = node.advertise<sensor_msgs::Image>("topic", queuesize);
-
-    img_bridge->image = height_map_mask_.clone();
-    img_bridge->encoding = "mono8";
-    // img_bridge = cv_bridge::CvImage(header, sensor_msgs::image_encodings::8UC1, height_map_mask);
-    img_bridge->toImageMsg(img_msg);    // from cv_bridge to sensor_msgs::Image
-    hm_vg_mask_im_pub.publish(img_msg); // ros::Publisher pub_img = node.advertise<sensor_msgs::Image>("topic", queuesize);
+    // for (int r = 0; r < im_nr_; ++r)
+    // {
+    //   for (int c = 0; c < im_nc_; ++c)
+    //   {
+    //     height_map_mask_.data.push_back(5 * r + c); // if unobserved
+    //     // height_map_.at<int>(r, c) = r + c; // if unobserved
+    //   }
+    // } // std::cout << height_map_ << std::endl;
+    // hm_vg_im_pub.publish(height_map_);
+    hm_vg_mask_im_pub.publish(height_map_mask_);
   }
 
   void get_hm_image_bounds(const float &border)
@@ -191,17 +238,29 @@ public:
     hm_ymax_ = orig_bb_max_.y + num_border_padding_cells_y * leaf_size_[1];
     im_nr_ = (hm_xmax_ - hm_xmin_) / leaf_size_[0];
     im_nc_ = (hm_ymax_ - hm_ymin_) / leaf_size_[1];
-    // std::cout << "hm bounds: " << hm_xmin_ << " " << hm_xmax_ << " " << hm_ymin_ << " " << hm_ymax_ << " " << im_nr_ << " " << im_nc_ << std::endl;
+    std::cout << "hm bounds: " << hm_xmin_ << " " << hm_xmax_ << " " << hm_ymin_ << " " << hm_ymax_ << " " << im_nr_ << " " << im_nc_ << std::endl;
   }
 
   void hm_voxel_grid_global_to_rc(const float &x, const float &y, int &im_r, int &im_c)
   {
-    // std::cout << "hm bounds: " << x << " " << y << " " << leaf_size_[0] << std::endl;
+    // std::cout << "hm bounds: " << x << " " << y << std::endl;
     // std::cout << "hm bounds: " << hm_xmin_ << " " << hm_xmax_ << " " << hm_ymin_ << " " << hm_ymax_ << std::endl;
 
     im_r = static_cast<int>((hm_xmax_ - x) / leaf_size_[0]);
     im_c = static_cast<int>((hm_ymax_ - y) / leaf_size_[1]);
     std::cout << "im_r, im_c " << im_r << " " << im_c << std::endl;
+  }
+
+  void hm_voxel_grid_rc_to_global(const int &r, const int &c, float &x, float &y)
+  {
+    x = hm_xmax_ - r * leaf_size_[0];
+    y = hm_ymax_ - c * leaf_size_[1];
+  }
+
+  void hm_voxel_grid_rc_to_grid_offset(int &dr, int &dc)
+  {
+    dr = (hm_xmax_ - orig_bb_max_.x) / leaf_size_[0];
+    dc = (hm_ymax_ - orig_bb_max_.y) / leaf_size_[1];
   }
 
   bool evaluateOccupancyGridAgainstGroundTruth(grasped_reconstruction::GTEval::Request &req, grasped_reconstruction::GTEval::Response &res)
@@ -290,10 +349,38 @@ public:
     }
   }
 
-  // bool captureAndProcessObservation(grasped_reconstruction::CaptureAndProcessObservation::Request &req, grasped_reconstruction::CaptureAndProcessObservation::Response &res)
-  // {
-  //   return true;
-  // }
+  bool fingertipsInCollisionWithObject(grasped_reconstruction::FingertipsInCollision::Request &req, grasped_reconstruction::FingertipsInCollision::Response &res)
+  {
+    for (auto it = req.eef_poses.poses.begin(); it != req.eef_poses.poses.end(); it++) // go through every candidate pose
+    {
+      geometry_msgs::PoseStamped ps;
+      ps.pose = *it;
+      ps.header.frame_id = "/world";
+      int in_collision = 0;
+      tf::Transform tf;
+      tf.setOrigin(tf::Vector3(ps.pose.position.x, ps.pose.position.y, ps.pose.position.z));
+      tf.setRotation(tf::Quaternion(ps.pose.orientation.x, ps.pose.orientation.y, ps.pose.orientation.z, ps.pose.orientation.w));
+      boost::shared_ptr<PointCloud> hullCloud(new PointCloud());
+      *hullCloud = occluding_finger_points_;
+      pcl_ros::transformPointCloud(*hullCloud, *hullCloud, tf);
+      for (const auto &p : *hullCloud)
+      {
+        Eigen::Vector4f w;
+        w << p.x, p.y, p.z, 1.0f;
+        // std::cout<<"w: "<<w[0]<<" "<<w[1]<<" "<<w[2]<<std::endl;
+        int index = worldCoordToVoxelIndex(w);
+        if (cell_occupancy_state_gt_.find(index) != cell_occupancy_state_gt_.end())
+        {
+          if (cell_occupancy_state_gt_.find(index)->second == Observation::OCCUPIED)
+          {
+            in_collision = 1;
+          }
+        }
+      }
+      res.in_collision.data.push_back(in_collision);
+    }
+    return true;
+  }
 
   bool captureAndProcessObservation(grasped_reconstruction::CaptureAndProcessObservation::Request &req, grasped_reconstruction::CaptureAndProcessObservation::Response &res)
   {
@@ -817,7 +904,7 @@ public:
     ros::Duration(1.0).sleep();
     divideBoundingBoxIntoVoxels();
     setInitialVoxelProbabilities();
-    // publishHeightMapFromVoxelGrid();
+    publishHeightMapFromVoxelGrid();
 
     for (size_t i = 0; i < num_voxels_; ++i)
     {

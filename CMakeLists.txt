@@ -80,6 +80,7 @@ add_service_files(
   CalculateNbv.srv
   CaptureAndProcessObservation.srv
   GTEval.srv
+  FingertipsInCollision.srv
 #   Service2.srv
 )
 

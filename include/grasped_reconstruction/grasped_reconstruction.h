@@ -57,3 +57,4 @@
 #include <grasped_reconstruction/GTEval.h>
 #include <queue>
 #include <cv_bridge/cv_bridge.h>
+#include <grasped_reconstruction/FingertipsInCollision.h>
