@@ -111,7 +111,7 @@ public:
 
   void publishHeightMapFromVoxelGrid()
   {
-    float border = 0.3; // [m] in xy plane beyond bb extent
+    float border = 0.2; // [m] in xy plane beyond bb extent
     get_hm_image_bounds(border);
 
     // https://stackoverflow.com/questions/20816955/how-to-set-all-pixels-of-an-opencv-mat-to-a-specific-value
@@ -123,30 +123,38 @@ public:
     height_map_mask_.encoding = "mono8";
     height_map_mask_.step = im_nc_; // https://answers.ros.org/question/11312/what-is-image-step/
 
+    height_map_.height = im_nr_;
+    height_map_.width = im_nc_;
+    height_map_.encoding = "mono8";
+    height_map_.step = im_nc_; // https://answers.ros.org/question/11312/what-is-image-step/
+
     // std::cout << "hm size" << height_map_.rows << " " << height_map_.cols << " " << height_map_mask_.rows << " " << height_map_mask_.cols << std::endl;
     // std::cout<<height_map_mask<<std::endl;
     int dr, dc;
+    std::vector<float> heights;
     hm_voxel_grid_rc_to_grid_offset(dr, dc);
-    std::cout<<"dr, dc: "<<dr<<" "<<dc<<std::endl;
+    std::cout << "dr, dc: " << dr << " " << dc << std::endl;
     for (int r = 0; r < im_nr_; ++r)
     {
       for (int c = 0; c < im_nc_; ++c)
       {
         float x, y;
         hm_voxel_grid_rc_to_global(r, c, x, y);
-        std::cout<<"global pos at r c: "<<r<<" "<<c<<" "<<x<<" "<<y<<std::endl;
+        std::cout << "global pos at r c: " << r << " " << c << " " << x << " " << y << std::endl;
         // Eigen::Vector4f w;
         // w << x, y, 0.0f, 1.
         if (x < orig_bb_min_.x || x > orig_bb_max_.x || y < orig_bb_min_.y || y > orig_bb_max_.y)
         {
           height_map_mask_.data.push_back(0); // if outside bounds
+          // height_map_.data.push_back(0.0f);   // if outside bounds
+          heights.push_back(0.0f);
         }
         else
         {
           int l = nl_ - 1; // start at the top
           // grid coord to index
           int index = gridCoordToVoxelIndex(Eigen::Vector3i(r - dr, c - dc, l));
-          std::cout << "index: " << index<<std::endl;
+          std::cout << "index: " << index << std::endl;
           // get current occupancy state from it
           int state = cell_occupancy_state_[index];
           // std::cout << "here2b" << std::endl;
@@ -165,14 +173,23 @@ public:
             // std::cout << "here2e" << std::endl;
           }
           Eigen::Vector4f wc = gridCoordToWorldCoord(Eigen::Vector3i(r - dr, c - dc, l));
-          std::cout << "r c l" << r - dr << " " << c  - dc<< " " << l << std::endl;
+          std::cout << "r c l" << r - dr << " " << c - dc << " " << l << std::endl;
           // std::cout << "here2f" << wc.matrix() << std::endl;
           std::cout << "xyz: " << wc(0) << " " << wc(1) << " " << wc(2) << std::endl;
           // std::cout << "hm bounds: " << hm_xmin_ << " " << hm_xmax_ << " " << hm_ymin_ << " " << hm_ymax_ << " " << im_nr_ << " " << im_nc_ << std::endl;
           // hm_voxel_grid_global_to_rc(wc(0), wc(1), im_r, im_c);
           height_map_mask_.data.push_back(mask_val); // if outside bounds
+          heights.push_back(wc(2));
+          // static_cast<int>((wc(2)-TABLETOP_HEIGHT)*255);
         }
       }
+    }
+
+    float max_height = *std::max_element(heights.begin(), heights.end());
+    float min_height = *std::min_element(heights.begin(), heights.end());
+    for (const auto &h : heights)
+    {
+      height_map_.data.push_back(static_cast<int>((h - min_height - TABLETOP_HEIGHT)/(max_height - min_height - TABLETOP_HEIGHT)*255));
     }
 
     // for (int r = 0; r < nr_; ++r)
@@ -224,7 +241,7 @@ public:
     //     // height_map_.at<int>(r, c) = r + c; // if unobserved
     //   }
     // } // std::cout << height_map_ << std::endl;
-    // hm_vg_im_pub.publish(height_map_);
+    hm_vg_im_pub.publish(height_map_);
     hm_vg_mask_im_pub.publish(height_map_mask_);
   }
 
